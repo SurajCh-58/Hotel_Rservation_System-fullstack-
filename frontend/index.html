@@ -1,0 +1,724 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HotelReservation – Frontend</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+
+<!-- ── Toast container ─────────────────────────────────── -->
+<div id="toast-container" class="toast-container"></div>
+
+<!-- ════════════════════════════════════════════════════════
+     AUTH SHELL (Unauthenticated)
+     ════════════════════════════════════════════════════════ -->
+<div id="auth-shell" class="auth-layout" style="display:none;">
+  <div>
+
+    <!-- ── LOGIN ─────────────────────────────────────────── -->
+    <div id="auth-login" class="auth-card auth-view active">
+      <div class="auth-header">
+        <div class="auth-logo">🏨</div>
+        <h1 class="auth-title">Welcome back</h1>
+        <p class="auth-subtitle">Sign in to your account</p>
+      </div>
+
+      <div id="login-alert" class="alert alert-error"></div>
+
+      <form id="form-login">
+        <div class="form-group">
+          <label class="form-label" for="login-email">Email Address</label>
+          <input id="login-email" class="form-control" type="email"
+            placeholder="you@example.com" required autocomplete="email" />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="login-password">Password</label>
+          <div class="input-group">
+            <input id="login-password" class="form-control" type="password"
+              placeholder="••••••••" required autocomplete="current-password" />
+            <button type="button" class="input-icon-right toggle-pw">👁</button>
+          </div>
+        </div>
+
+        <div class="flex-between mb-2">
+          <span></span>
+          <button type="button" class="link-btn"
+            onclick="Router.goAuth('forgot-password')">Forgot password?</button>
+        </div>
+
+        <button id="btn-login" class="btn btn-primary btn-block btn-lg" type="submit">
+          Sign In
+        </button>
+      </form>
+
+      <div class="divider">or</div>
+
+      <p class="text-center" style="font-size:0.875rem;color:var(--text-secondary);">
+        Don't have an account?
+        <button class="link-btn" onclick="Router.goAuth('register')">Create account</button>
+      </p>
+    </div>
+
+    <!-- ── REGISTER ───────────────────────────────────────── -->
+    <div id="auth-register" class="auth-card auth-view" style="display:none;">
+      <div class="auth-header">
+        <div class="auth-logo">🏨</div>
+        <h1 class="auth-title">Create account</h1>
+        <p class="auth-subtitle">Join HotelReservation today</p>
+      </div>
+
+      <div id="reg-alert" class="alert alert-error"></div>
+
+      <form id="form-register">
+        <div class="form-group">
+          <label class="form-label" for="reg-name">Full Name</label>
+          <input id="reg-name" class="form-control" type="text"
+            placeholder="John Doe" required autocomplete="name" />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="reg-email">Email Address</label>
+          <input id="reg-email" class="form-control" type="email"
+            placeholder="you@example.com" required autocomplete="email" />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="reg-password">Password</label>
+          <div class="input-group">
+            <input id="reg-password" class="form-control" type="password"
+              placeholder="Min 8 characters" required autocomplete="new-password" />
+            <button type="button" class="input-icon-right toggle-pw">👁</button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="reg-confirm">Confirm Password</label>
+          <div class="input-group">
+            <input id="reg-confirm" class="form-control" type="password"
+              placeholder="Repeat password" required autocomplete="new-password" />
+            <button type="button" class="input-icon-right toggle-pw">👁</button>
+          </div>
+        </div>
+
+        <button id="btn-register" class="btn btn-primary btn-block btn-lg" type="submit">
+          Create Account
+        </button>
+      </form>
+
+      <div class="divider">or</div>
+
+      <p class="text-center" style="font-size:0.875rem;color:var(--text-secondary);">
+        Already have an account?
+        <button class="link-btn" onclick="Router.goAuth('login')">Sign in</button>
+      </p>
+    </div>
+
+    <!-- ── VERIFY EMAIL ───────────────────────────────────── -->
+    <div id="auth-verify-email" class="auth-card auth-view" style="display:none;">
+      <div class="auth-header">
+        <div class="auth-logo">📧</div>
+        <h1 class="auth-title">Verify your email</h1>
+        <p class="auth-subtitle">
+          We sent a 6-digit code to<br>
+          <strong id="verify-email-hint" style="color:var(--primary);">your email</strong>
+        </p>
+      </div>
+
+      <div id="verify-alert" class="alert alert-error"></div>
+
+      <div id="otp-verify-email" class="otp-container">
+        <input class="otp-input" type="text" maxlength="1" inputmode="numeric" />
+        <input class="otp-input" type="text" maxlength="1" inputmode="numeric" />
+        <input class="otp-input" type="text" maxlength="1" inputmode="numeric" />
+        <input class="otp-input" type="text" maxlength="1" inputmode="numeric" />
+        <input class="otp-input" type="text" maxlength="1" inputmode="numeric" />
+        <input class="otp-input" type="text" maxlength="1" inputmode="numeric" />
+      </div>
+
+      <button id="btn-verify-email" class="btn btn-primary btn-block btn-lg">
+        Verify Email
+      </button>
+
+      <p class="text-center mt-2" style="font-size:0.875rem;color:var(--text-secondary);">
+        Didn't receive it?
+        <button id="btn-resend-verify" class="link-btn">Resend code</button>
+      </p>
+
+      <p class="text-center mt-1">
+        <button class="link-btn" onclick="Router.goAuth('login')" style="color:var(--text-muted);font-weight:500;">
+          ← Back to login
+        </button>
+      </p>
+    </div>
+
+    <!-- ── FORGOT PASSWORD ────────────────────────────────── -->
+    <div id="auth-forgot-password" class="auth-card auth-view" style="display:none;">
+      <div class="auth-header">
+        <div class="auth-logo">🔑</div>
+        <h1 class="auth-title">Reset password</h1>
+        <p class="auth-subtitle">Enter your email and we'll send a reset code</p>
+      </div>
+
+      <div id="forgot-alert" class="alert alert-error"></div>
+
+      <form id="form-forgot">
+        <div class="form-group">
+          <label class="form-label" for="forgot-email">Email Address</label>
+          <input id="forgot-email" class="form-control" type="email"
+            placeholder="you@example.com" required />
+        </div>
+        <button id="btn-forgot" class="btn btn-primary btn-block btn-lg" type="submit">
+          Send Reset Code
+        </button>
+      </form>
+
+      <p class="text-center mt-2">
+        <button class="link-btn" onclick="Router.goAuth('login')" style="color:var(--text-muted);font-weight:500;">
+          ← Back to login
+        </button>
+      </p>
+    </div>
+
+    <!-- ── RESET PASSWORD (OTP + new password) ───────────── -->
+    <div id="auth-reset-password" class="auth-card auth-view" style="display:none;">
+      <div class="auth-header">
+        <div class="auth-logo">🔐</div>
+        <h1 class="auth-title">Set new password</h1>
+        <p class="auth-subtitle">
+          Enter the code sent to<br>
+          <strong id="reset-email-hint" style="color:var(--primary);">your email</strong>
+        </p>
+      </div>
+
+      <div id="reset-alert" class="alert alert-error"></div>
+
+      <div id="otp-reset" class="otp-container">
+        <input class="otp-input" type="text" maxlength="1" inputmode="numeric" />
+        <input class="otp-input" type="text" maxlength="1" inputmode="numeric" />
+        <input class="otp-input" type="text" maxlength="1" inputmode="numeric" />
+        <input class="otp-input" type="text" maxlength="1" inputmode="numeric" />
+        <input class="otp-input" type="text" maxlength="1" inputmode="numeric" />
+        <input class="otp-input" type="text" maxlength="1" inputmode="numeric" />
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="reset-new-password">New Password</label>
+        <div class="input-group">
+          <input id="reset-new-password" class="form-control" type="password"
+            placeholder="Min 8 characters" autocomplete="new-password" />
+          <button type="button" class="input-icon-right toggle-pw">👁</button>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="reset-confirm-password">Confirm Password</label>
+        <div class="input-group">
+          <input id="reset-confirm-password" class="form-control" type="password"
+            placeholder="Repeat password" autocomplete="new-password" />
+          <button type="button" class="input-icon-right toggle-pw">👁</button>
+        </div>
+      </div>
+
+      <button id="btn-reset-password" class="btn btn-primary btn-block btn-lg">
+        Reset Password
+      </button>
+    </div>
+
+  </div>
+</div>
+<!-- end auth-shell -->
+
+<!-- ════════════════════════════════════════════════════════
+     APP SHELL (Authenticated)
+     ════════════════════════════════════════════════════════ -->
+<div id="app-shell" class="app-container" style="display:none;">
+
+  <!-- Sidebar overlay (mobile) -->
+  <div id="sidebar-overlay" class="sidebar-overlay"></div>
+
+  <!-- ── SIDEBAR ─────────────────────────────────────────── -->
+  <aside id="sidebar" class="sidebar">
+    <div class="sidebar-logo">
+      <div class="logo-title"><span>🏨</span> HotelReservation</div>
+    </div>
+
+    <nav class="sidebar-nav">
+      <span class="nav-section-label">Main</span>
+      <button class="nav-link active" data-view="dashboard" onclick="Router.go('dashboard')">
+        <span class="nav-icon">🏠</span> Dashboard
+      </button>
+      <button class="nav-link" data-view="profile" onclick="Router.go('profile')">
+        <span class="nav-icon">👤</span> My Profile
+      </button>
+
+      <span class="nav-section-label">Account</span>
+      <button class="nav-link" data-view="edit-profile" onclick="Router.go('edit-profile')">
+        <span class="nav-icon">✏️</span> Edit Profile
+      </button>
+      <button class="nav-link" data-view="change-password" onclick="Router.go('change-password')">
+        <span class="nav-icon">🔒</span> Change Password
+      </button>
+
+      <span class="nav-section-label">Developer</span>
+      <button class="nav-link" data-view="endpoints" onclick="Router.go('endpoints')">
+        <span class="nav-icon">🔌</span> API Explorer
+        <span class="nav-badge">10</span>
+      </button>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="user-info-mini">
+        <div class="avatar-circle" id="mini-avatar">U</div>
+        <div class="user-info-text">
+          <div class="user-name-mini" id="mini-name">Loading…</div>
+          <div class="user-email-mini" id="mini-email"></div>
+        </div>
+      </div>
+      <button id="btn-logout" class="btn btn-ghost btn-block btn-sm" style="margin-top:0.5rem;">
+        🚪 Sign Out
+      </button>
+    </div>
+  </aside>
+
+  <!-- ── MAIN CONTENT ───────────────────────────────────── -->
+  <div class="main-content">
+
+    <!-- Topbar -->
+    <header class="topbar">
+      <div>
+        <button id="hamburger" class="hamburger">☰</button>
+        <div class="topbar-title" id="topbar-title">Dashboard</div>
+        <div class="topbar-subtitle" id="topbar-subtitle">Welcome back!</div>
+      </div>
+      <div class="topbar-actions">
+        <button class="btn btn-outline btn-sm" onclick="Router.go('edit-profile')">
+          Edit Profile
+        </button>
+      </div>
+    </header>
+
+    <!-- ══════════════════════════════════════════════════
+         VIEW: Dashboard
+         ══════════════════════════════════════════════════ -->
+    <div id="view-dashboard" class="view active">
+      <div class="page-container">
+
+        <div class="profile-hero">
+          <div class="profile-avatar-large" id="dash-avatar">U</div>
+          <div class="profile-hero-info">
+            <div class="profile-hero-name" id="dash-name">Loading…</div>
+            <div class="profile-hero-email" id="dash-email"></div>
+            <div class="profile-hero-badge">✅ Active Account</div>
+          </div>
+        </div>
+
+        <div class="info-grid">
+          <div class="info-item">
+            <div class="info-label">Full Name</div>
+            <div class="info-value" id="dash-name-2">—</div>
+          </div>
+          <div class="info-item">
+            <div class="info-label">Email</div>
+            <div class="info-value" id="dash-email-2">—</div>
+          </div>
+          <div class="info-item">
+            <div class="info-label">Phone</div>
+            <div class="info-value" id="dash-phone">—</div>
+          </div>
+          <div class="info-item">
+            <div class="info-label">User ID</div>
+            <div class="info-value" id="dash-id">—</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Quick Actions</div>
+              <div class="card-subtitle">Common tasks</div>
+            </div>
+          </div>
+          <div style="display:flex;gap:0.75rem;flex-wrap:wrap;">
+            <button class="btn btn-primary" onclick="Router.go('edit-profile')">✏️ Update Profile</button>
+            <button class="btn btn-outline" onclick="Router.go('change-password')">🔒 Change Password</button>
+            <button class="btn btn-ghost" onclick="Router.go('endpoints')">🔌 API Explorer</button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════
+         VIEW: Profile (read-only)
+         ══════════════════════════════════════════════════ -->
+    <div id="view-profile" class="view">
+      <div class="page-container">
+
+        <div class="profile-hero">
+          <div class="profile-avatar-large" id="profile-avatar">U</div>
+          <div class="profile-hero-info">
+            <div class="profile-hero-name" id="profile-name">Loading…</div>
+            <div class="profile-hero-email" id="profile-email"></div>
+            <div class="profile-hero-badge">✅ Verified Account</div>
+          </div>
+          <button class="btn btn-outline btn-sm" style="color:white;border-color:rgba(255,255,255,0.6);background:rgba(255,255,255,0.15);"
+            onclick="Router.go('edit-profile')">Edit ✏️</button>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">Account Details</div>
+          </div>
+          <div class="info-grid" style="margin-bottom:0;">
+            <div class="info-item">
+              <div class="info-label">Full Name</div>
+              <div class="info-value" id="profile-name2">—</div>
+            </div>
+            <div class="info-item">
+              <div class="info-label">Email</div>
+              <div class="info-value" id="profile-email2">—</div>
+            </div>
+            <div class="info-item">
+              <div class="info-label">Phone</div>
+              <div class="info-value" id="profile-phone">—</div>
+            </div>
+            <div class="info-item">
+              <div class="info-label">User ID</div>
+              <div class="info-value" id="profile-id">—</div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════
+         VIEW: Edit Profile
+         ══════════════════════════════════════════════════ -->
+    <div id="view-edit-profile" class="view">
+      <div class="page-container">
+
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Update Profile</div>
+              <div class="card-subtitle">PATCH /api/me/profile/update</div>
+            </div>
+          </div>
+
+          <div id="edit-profile-alert" class="alert alert-error"></div>
+
+          <form id="form-edit-profile">
+            <!-- Avatar upload -->
+            <label for="edit-image" style="cursor:pointer;">
+              <div class="avatar-upload-area">
+                <div class="avatar-preview" id="edit-avatar-preview">U</div>
+                <div class="avatar-upload-text">
+                  <strong>Click to change profile photo</strong>
+                  JPG, PNG supported
+                </div>
+              </div>
+            </label>
+            <input id="edit-image" type="file" accept="image/*" style="display:none;" />
+
+            <div class="form-group">
+              <label class="form-label" for="edit-phone">Phone Number</label>
+              <input id="edit-phone" class="form-control" type="tel"
+                placeholder="+977 98XXXXXXXX" />
+              <div class="form-hint">Include country code for best results</div>
+            </div>
+
+            <div style="display:flex;gap:0.75rem;">
+              <button id="btn-save-profile" class="btn btn-primary" type="submit">Save Changes</button>
+              <button type="button" class="btn btn-ghost" onclick="Router.go('profile')">Cancel</button>
+            </div>
+          </form>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════
+         VIEW: Change Password
+         ══════════════════════════════════════════════════ -->
+    <div id="view-change-password" class="view">
+      <div class="page-container">
+
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Change Password</div>
+              <div class="card-subtitle">POST /_allauth/app/v1/auth/password/change</div>
+            </div>
+          </div>
+
+          <div id="change-pw-alert" class="alert alert-error"></div>
+
+          <form id="form-change-password">
+            <div class="form-group">
+              <label class="form-label" for="current-password">Current Password</label>
+              <div class="input-group">
+                <input id="current-password" class="form-control" type="password"
+                  placeholder="Your current password" required autocomplete="current-password" />
+                <button type="button" class="input-icon-right toggle-pw">👁</button>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="new-password">New Password</label>
+              <div class="input-group">
+                <input id="new-password" class="form-control" type="password"
+                  placeholder="Min 8 characters" required autocomplete="new-password" />
+                <button type="button" class="input-icon-right toggle-pw">👁</button>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="confirm-new-password">Confirm New Password</label>
+              <div class="input-group">
+                <input id="confirm-new-password" class="form-control" type="password"
+                  placeholder="Repeat new password" required autocomplete="new-password" />
+                <button type="button" class="input-icon-right toggle-pw">👁</button>
+              </div>
+            </div>
+
+            <button id="btn-change-password" class="btn btn-primary" type="submit">
+              Update Password
+            </button>
+          </form>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════
+         VIEW: API Explorer
+         ══════════════════════════════════════════════════ -->
+    <div id="view-endpoints" class="view">
+      <div class="page-container">
+
+        <div class="card section-gap">
+          <div class="card-header">
+            <div>
+              <div class="card-title">🔌 API Explorer</div>
+              <div class="card-subtitle">All 10 backend endpoints – click to expand & test</div>
+            </div>
+          </div>
+
+          <!-- ── Auth Endpoints ─────────────────────── -->
+          <p style="font-size:0.75rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:0.5rem;">Auth Endpoints</p>
+
+          <!-- 1. Signup -->
+          <div class="endpoint-card">
+            <div class="endpoint-header">
+              <span class="method-badge method-post">POST</span>
+              <span class="endpoint-path">/_allauth/app/v1/auth/signup</span>
+              <span class="endpoint-desc">Register a new user</span>
+              <span class="ep-arrow">▼</span>
+            </div>
+            <div class="endpoint-body">
+              <p style="font-size:0.8rem;color:var(--text-secondary);margin-bottom:0.5rem;">Request body (JSON):</p>
+              <div class="code-block">{ "email": "user@example.com", "password": "secure123", "full_name": "John Doe" }</div>
+              <p style="font-size:0.8rem;color:var(--text-secondary);margin:0.75rem 0 0.25rem;">Success 200 response:</p>
+              <div class="code-block">{ "status": 200, "data": { "access": "eyJ...", "refresh": "eyJ..." } }</div>
+              <p style="font-size:0.75rem;color:var(--text-muted);margin-top:0.5rem;">→ Then use <b>POST /auth/email/verify</b> with the 6-digit OTP code sent to email.</p>
+            </div>
+          </div>
+
+          <!-- 2. Login -->
+          <div class="endpoint-card">
+            <div class="endpoint-header">
+              <span class="method-badge method-post">POST</span>
+              <span class="endpoint-path">/_allauth/app/v1/auth/login</span>
+              <span class="endpoint-desc">Login with email + password</span>
+              <span class="ep-arrow">▼</span>
+            </div>
+            <div class="endpoint-body">
+              <div class="code-block">{ "email": "user@example.com", "password": "secure123" }</div>
+              <p style="font-size:0.8rem;color:var(--text-secondary);margin:0.75rem 0 0.25rem;">Response:</p>
+              <div class="code-block">{ "status": 200, "data": { "access": "eyJ...", "refresh": "eyJ...", "user": { "email": "...", "full_name": "..." } } }</div>
+            </div>
+          </div>
+
+          <!-- 3. Logout -->
+          <div class="endpoint-card">
+            <div class="endpoint-header">
+              <span class="method-badge method-delete">DELETE</span>
+              <span class="endpoint-path">/_allauth/app/v1/auth/logout</span>
+              <span class="endpoint-desc">Logout (invalidate session)</span>
+              <span class="ep-arrow">▼</span>
+            </div>
+            <div class="endpoint-body">
+              <p style="font-size:0.8rem;color:var(--text-secondary);">Requires: Authorization Bearer token. No body needed.</p>
+              <div class="code-block">DELETE /_allauth/app/v1/auth/logout
+Authorization: Bearer &lt;access_token&gt;</div>
+            </div>
+          </div>
+
+          <!-- 4. Verify Email -->
+          <div class="endpoint-card">
+            <div class="endpoint-header">
+              <span class="method-badge method-post">POST</span>
+              <span class="endpoint-path">/_allauth/app/v1/auth/email/verify</span>
+              <span class="endpoint-desc">Verify email with 6-digit OTP code</span>
+              <span class="ep-arrow">▼</span>
+            </div>
+            <div class="endpoint-body">
+              <div class="code-block">{ "key": "123456" }</div>
+              <p style="font-size:0.75rem;color:var(--text-muted);margin-top:0.5rem;">Also supports PUT with empty body to resend the verification email.</p>
+            </div>
+          </div>
+
+          <!-- 5. Request Password Reset -->
+          <div class="endpoint-card">
+            <div class="endpoint-header">
+              <span class="method-badge method-post">POST</span>
+              <span class="endpoint-path">/_allauth/app/v1/auth/password/reset</span>
+              <span class="endpoint-desc">Request password reset (sends OTP to email)</span>
+              <span class="ep-arrow">▼</span>
+            </div>
+            <div class="endpoint-body">
+              <div class="code-block">{ "email": "user@example.com" }</div>
+            </div>
+          </div>
+
+          <!-- 6. Reset Password by Code -->
+          <div class="endpoint-card">
+            <div class="endpoint-header">
+              <span class="method-badge method-post">POST</span>
+              <span class="endpoint-path">/_allauth/app/v1/auth/password/reset/by_code</span>
+              <span class="endpoint-desc">Set new password using OTP code</span>
+              <span class="ep-arrow">▼</span>
+            </div>
+            <div class="endpoint-body">
+              <div class="code-block">{ "email": "user@example.com", "code": "123456", "password": "newSecret99" }</div>
+            </div>
+          </div>
+
+          <!-- 7. Change Password -->
+          <div class="endpoint-card">
+            <div class="endpoint-header">
+              <span class="method-badge method-post">POST</span>
+              <span class="endpoint-path">/_allauth/app/v1/auth/password/change</span>
+              <span class="endpoint-desc">Change password (authenticated)</span>
+              <span class="ep-arrow">▼</span>
+            </div>
+            <div class="endpoint-body">
+              <p style="font-size:0.8rem;color:var(--text-secondary);margin-bottom:0.35rem;">Requires: Bearer token</p>
+              <div class="code-block">{ "current_password": "oldPass", "new_password": "newPass123" }</div>
+            </div>
+          </div>
+
+          <!-- 8. Refresh Token -->
+          <div class="endpoint-card">
+            <div class="endpoint-header">
+              <span class="method-badge method-post">POST</span>
+              <span class="endpoint-path">/_allauth/app/v1/auth/token/refresh</span>
+              <span class="endpoint-desc">Refresh JWT access token</span>
+              <span class="ep-arrow">▼</span>
+            </div>
+            <div class="endpoint-body">
+              <div class="code-block">{ "refresh": "eyJ..." }</div>
+              <button class="btn btn-outline btn-sm" style="margin-top:0.75rem;" onclick="explorerCall('refresh')">▶ Try it</button>
+              <div id="result-refresh" class="response-area" style="display:none;margin-top:0.5rem;"></div>
+            </div>
+          </div>
+
+          <!-- ── Profile Endpoints ─────────────────── -->
+          <p style="font-size:0.75rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;margin:1rem 0 0.5rem;">Profile Endpoints</p>
+
+          <!-- 9. Get Me -->
+          <div class="endpoint-card">
+            <div class="endpoint-header">
+              <span class="method-badge method-get">GET</span>
+              <span class="endpoint-path">/api/me/</span>
+              <span class="endpoint-desc">Get current authenticated user</span>
+              <span class="ep-arrow">▼</span>
+            </div>
+            <div class="endpoint-body">
+              <p style="font-size:0.8rem;color:var(--text-secondary);margin-bottom:0.35rem;">Requires: Bearer token</p>
+              <div class="code-block">GET /api/me/
+Authorization: Bearer &lt;access_token&gt;</div>
+              <p style="font-size:0.8rem;color:var(--text-secondary);margin:0.75rem 0 0.25rem;">Response (UserSerializer):</p>
+              <div class="code-block">{ "id": 1, "full_name": "John Doe", "email": "john@example.com", "profiles": { "image": "/media/profile/pic.jpg", "phone": "+977..." } }</div>
+              <button class="btn btn-outline btn-sm" style="margin-top:0.75rem;" onclick="explorerCall('get-me')">▶ Try it</button>
+              <div id="result-get-me" class="response-area" style="margin-top:0.5rem;"></div>
+            </div>
+          </div>
+
+          <!-- 10. Update Profile -->
+          <div class="endpoint-card">
+            <div class="endpoint-header">
+              <span class="method-badge method-patch">PATCH</span>
+              <span class="endpoint-path">/api/me/profile/update</span>
+              <span class="endpoint-desc">Update profile image & phone</span>
+              <span class="ep-arrow">▼</span>
+            </div>
+            <div class="endpoint-body">
+              <p style="font-size:0.8rem;color:var(--text-secondary);margin-bottom:0.35rem;">Requires: Bearer token · Content-Type: multipart/form-data</p>
+              <div class="code-block">PATCH /api/me/profile/update
+Authorization: Bearer &lt;access_token&gt;
+
+FormData:
+  phone: "+977 9800000000"
+  image: [file upload, optional]</div>
+              <p style="font-size:0.8rem;color:var(--text-secondary);margin:0.75rem 0 0.25rem;">Response (ProfileSerializer):</p>
+              <div class="code-block">{ "image": "/media/profile/new.jpg", "phone": "+977 9800000000" }</div>
+              <p style="font-size:0.75rem;color:var(--text-muted);margin-top:0.4rem;">Also supports GET (retrieve) and PUT (full update).</p>
+              <button class="btn btn-outline btn-sm" style="margin-top:0.75rem;" onclick="explorerCall('get-profile')">▶ GET Profile</button>
+              <div id="result-get-profile" class="response-area" style="margin-top:0.5rem;"></div>
+            </div>
+          </div>
+
+        </div><!-- end card -->
+
+        <!-- Token Inspector -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">🔑 Current Tokens</div>
+          </div>
+          <div>
+            <p style="font-size:0.78rem;color:var(--text-muted);margin-bottom:0.5rem;">Access Token (JWT):</p>
+            <div class="code-block" id="token-display" style="word-break:break-all;font-size:0.72rem;max-height:80px;overflow:auto;">—</div>
+            <button class="btn btn-outline btn-sm" style="margin-top:0.75rem;" onclick="document.getElementById('token-display').textContent = Tokens.access || '(none)'">
+              Show Token
+            </button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+    <!-- end views -->
+
+  </div><!-- end main-content -->
+</div><!-- end app-shell -->
+
+<script src="js/api.js"></script>
+<script src="js/app.js"></script>
+
+<!-- After DOM is set up, wire up auth-view switching -->
+<script>
+  // Override goAuth to properly show/hide auth views
+  Router.goAuth = function(viewId) {
+    document.querySelectorAll('.auth-view').forEach(v => {
+      v.style.display = 'none';
+    });
+    const el = document.getElementById(`auth-${viewId}`);
+    if (el) el.style.display = 'block';
+  };
+
+  // Also sync dash-name-2 and dash-email-2 when user loads
+  const _origRender = window.renderUserInfo;
+  window.renderUserInfo = function(user) {
+    _origRender(user);
+    const n2 = document.getElementById('dash-name-2');
+    const e2 = document.getElementById('dash-email-2');
+    const pn2 = document.getElementById('profile-name2');
+    const pe2 = document.getElementById('profile-email2');
+    if (n2) n2.textContent = user.full_name || '—';
+    if (e2) e2.textContent = user.email || '—';
+    if (pn2) pn2.textContent = user.full_name || '—';
+    if (pe2) pe2.textContent = user.email || '—';
+  };
+</script>
+
+</body>
+</html>
