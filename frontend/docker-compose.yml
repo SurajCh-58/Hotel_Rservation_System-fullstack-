@@ -22,6 +22,8 @@ services:
     container_name: hotelreservation-frontend
     ports:
       - "80:80"
+    volumes:
+      - media_volume:/usr/share/nginx/media:ro   # ← shared with backend; read-only
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost/health"]
@@ -36,6 +38,11 @@ services:
         max-file: "3"
     networks:
       - hotelreservation_network
+
+volumes:
+  media_volume:
+    external: true
+    name: hotelreservation_media_volume   # ← must match backend's explicit name
 
 networks:
   hotelreservation_network:

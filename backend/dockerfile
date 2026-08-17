@@ -36,5 +36,7 @@ USER appuser
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD python manage.py check || exit 1
 
-# Run the application
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "4", "--threads", "2", "project.wsgi:application"]
+# FIX #4: was "project.wsgi:application" — correct module is HotelReservation.wsgi
+# docker-compose.yml overrides this with the correct command, but a bare
+# "docker run hotelreservation-web" would crash without this fix.
+CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "4", "--threads", "2", "HotelReservation.wsgi:application"]

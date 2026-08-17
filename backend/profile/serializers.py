@@ -12,8 +12,10 @@ class ProfileSerializer(serializers.ModelSerializer):
 
 
 class UserSerializer(serializers.ModelSerializer):
-    profiles = ProfileSerializer(read_only=True)
+    # FIX #2: key renamed from "profiles" → "profile" to match the
+    # OneToOne related_name on Profile.user and what app.js now reads.
+    profile = ProfileSerializer(read_only=True)
 
     class Meta:
         model = User
-        fields = ['id', 'full_name', 'email', 'profiles']
+        fields = ['id', 'full_name', 'email', 'profile']

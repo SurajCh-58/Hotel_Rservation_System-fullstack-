@@ -1,24 +1,27 @@
 # ─────────────────────────────────────────────────────────────
 #  HotelReservation – Backend Compose
 #
-#  This is your EXISTING file with ONE addition:
-#    networks.hotelreservation_network.name is set explicitly
-#    so the frontend compose can join it via "external: true".
-#
-#  Run from Django Day-44/backend/:
+#  Run from backend/:
 #    docker compose up --build -d
+#
+#  FIX #7: Removed "5432:5432" port mapping from the db service.
+#  PostgreSQL is now reachable only by containers on the same
+#  Docker network (hotelreservation_network), not from the host.
+#  For local development access use:
+#    docker compose exec db psql -U $POSTGRES_USER $POSTGRES_DB
 # ─────────────────────────────────────────────────────────────
 
 services:
   web:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: dockerfile
       args:
         UID: ${UID:-1000}
         GID: ${GID:-1000}
     image: hotelreservation-web:latest
     container_name: hotelreservation-web
+    # FIX #4: explicitly correct WSGI path (also fixes dockerfile CMD)
     command: gunicorn HotelReservation.wsgi:application --bind 0.0.0.0:8000 --workers 4 --threads 2
     volumes:
       - .:/app
@@ -54,8 +57,11 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       # - ./backups:/backups  # Uncomment to enable host backups
-    ports:
-      - "5432:5432"
+    # FIX #7: DB port is NOT published to the host.
+    # Containers on hotelreservation_network can still reach it at
+    # postgres://hotelreservation-db:5432/...
+    # ports:
+    #   - "5432:5432"   ← removed; exposes DB to any host process
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-suraj} -d ${POSTGRES_DB:-hotel_db}"]
       interval: 10s
@@ -74,10 +80,9 @@ volumes:
   postgres_data:
   static_volume:
   media_volume:
+    name: hotelreservation_media_volume 
 
 networks:
   hotelreservation_network:
     driver: bridge
-    # ↓ Only change from your original: explicit name so the
-    #   frontend compose can reference it as external: true
     name: hotelreservation_network

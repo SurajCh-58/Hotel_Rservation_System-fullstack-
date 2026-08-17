@@ -646,3 +646,62 @@ body {
   .profile-hero { flex-direction: column; text-align: center; }
   .topbar { padding: 0.875rem 1.25rem; }
 }
+
+/* ══════════════════════════════════════════════════════════════
+   GOOGLE SIGN-IN BUTTON
+   ══════════════════════════════════════════════════════════════ */
+
+.btn-google {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  background: #ffffff;
+  color: #374151;
+  border: 1.5px solid #d1d5db;
+  border-radius: var(--radius-md, 10px);
+  font-size: 0.9375rem;
+  font-weight: 500;
+  padding: 0.7rem 1.25rem;
+  cursor: pointer;
+  transition: background 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+  width: 100%;
+  letter-spacing: 0.01em;
+}
+
+.btn-google:hover:not(:disabled) {
+  background: #f9fafb;
+  border-color: #9ca3af;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+}
+
+.btn-google:active:not(:disabled) {
+  background: #f3f4f6;
+}
+
+.btn-google:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-google.btn-loading {
+  pointer-events: none;
+  opacity: 0.7;
+}
+
+.btn-google .google-icon {
+  flex-shrink: 0;
+}
+
+/* Dark-mode friendly override */
+@media (prefers-color-scheme: dark) {
+  .btn-google {
+    background: #1f2937;
+    color: #f9fafb;
+    border-color: #374151;
+  }
+  .btn-google:hover:not(:disabled) {
+    background: #374151;
+    border-color: #6b7280;
+  }
+}

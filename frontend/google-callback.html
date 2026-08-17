@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Completing Sign-In…</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      background: #f8fafc;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      color: #374151;
+    }
+    .card {
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.10);
+      padding: 2.5rem 2rem;
+      text-align: center;
+      max-width: 360px;
+      width: 90%;
+    }
+    .spinner {
+      width: 48px;
+      height: 48px;
+      border: 4px solid #e5e7eb;
+      border-top-color: #4f46e5;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 1.25rem;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    h1 { font-size: 1.1rem; font-weight: 600; margin-bottom: 0.4rem; }
+    p  { font-size: 0.875rem; color: #6b7280; }
+    .icon  { font-size: 2.5rem; margin-bottom: 1rem; }
+    .error { color: #dc2626; }
+    .note  { margin-top: 1rem; font-size: 0.8rem; color: #9ca3af; }
+  </style>
+</head>
+<body>
+<div class="card" id="card">
+  <div class="spinner" id="spinner"></div>
+  <h1 id="title">Completing sign-in…</h1>
+  <p id="subtitle">Please wait while we finish connecting your Google account.</p>
+</div>
+
+<script>
+/**
+ * google-callback.html  (production-grade)
+ * ─────────────────────────────────────────
+ * Receives the OAuth redirect from allauth after Google authentication,
+ * extracts JWT tokens, and sends them to the parent window via postMessage.
+ *
+ * SECURITY NOTES:
+ *  - postMessage target is always window.location.origin (never '*')
+ *  - Tokens are never written to the DOM or logged
+ *  - The popup auto-closes after delivering or erroring
+ *  - All paths either resolve or reject, so the popup never hangs open
+ *
+ * FLOW:
+ *  1. allauth processes the OAuth code server-side, creates/logs in the user,
+ *     and redirects this popup to:
+ *     /google-callback.html#access_token=JWT&refresh_token=JWT
+ *     OR /google-callback.html?access_token=JWT&refresh_token=JWT
+ *  2. We parse the URL, validate the tokens, and postMessage to opener.
+ *  3. If no tokens are in the URL we attempt a session fetch as a fallback.
+ *  4. Parent tab receives GOOGLE_AUTH message, stores tokens, shows the app.
+ *  5. This popup closes itself.
+ */
+(function () {
+  'use strict';
+
+  const CLOSE_DELAY_MS   = 800;   // Give parent time to process before closing
+  const SESSION_TIMEOUT  = 5000;  // Max ms to wait for session fetch
+
+  // ── UI helpers ────────────────────────────────────────────────────────────
+  function showSuccess() {
+    document.getElementById('spinner').style.borderTopColor = '#16a34a';
+    document.getElementById('title').textContent    = 'Signed in!';
+    document.getElementById('subtitle').textContent = 'Returning you to the app…';
+  }
+
+  function showError(message) {
+    const safeMsg = String(message).replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    document.getElementById('card').innerHTML = `
+      <div class="icon">❌</div>
+      <h1 class="error">Sign-in failed</h1>
+      <p>${safeMsg}</p>
+      <p class="note">You can close this window.</p>
+    `;
+  }
+
+  // ── Token extraction ──────────────────────────────────────────────────────
+  function extractFromUrl() {
+    // allauth may deliver tokens in the fragment (#) or query string (?)
+    const fragment = new URLSearchParams(window.location.hash.substring(1));
+    const query    = new URLSearchParams(window.location.search);
+
+    return {
+      access:  fragment.get('access_token')  || query.get('access_token')  || null,
+      refresh: fragment.get('refresh_token') || query.get('refresh_token') || null,
+      error:   fragment.get('error')         || query.get('error')         || null,
+    };
+  }
+
+  // ── postMessage to parent ─────────────────────────────────────────────────
+  function notifyParent(payload) {
+    if (window.opener && !window.opener.closed) {
+      // SECURITY: always target own origin, never '*'
+      window.opener.postMessage(payload, window.location.origin);
+    }
+  }
+
+  function deliverTokens(access, refresh) {
+    showSuccess();
+    notifyParent({ type: 'GOOGLE_AUTH', access_token: access, refresh_token: refresh || null });
+    setTimeout(() => window.close(), CLOSE_DELAY_MS);
+  }
+
+  function deliverError(message) {
+    showError(message);
+    notifyParent({ type: 'GOOGLE_AUTH', error: message });
+    setTimeout(() => window.close(), 3000);
+  }
+
+  // ── Session fallback ──────────────────────────────────────────────────────
+  // If allauth redirects here without tokens in the URL (can happen in some
+  // allauth versions), we ask the server for the current session tokens.
+  function trySessionFallback() {
+    const controller = new AbortController();
+    const timeoutId  = setTimeout(() => controller.abort(), SESSION_TIMEOUT);
+
+    fetch('/_allauth/app/v1/auth/session', {
+      credentials: 'include',
+      signal:      controller.signal,
+    })
+      .then(r => {
+        clearTimeout(timeoutId);
+        if (!r.ok) throw new Error(`Session fetch returned ${r.status}`);
+        return r.json();
+      })
+      .then(data => {
+        const access  = data?.meta?.access_token;
+        const refresh = data?.meta?.refresh_token;
+        if (access) {
+          deliverTokens(access, refresh);
+        } else {
+          deliverError('Could not retrieve tokens from session. Please try again.');
+        }
+      })
+      .catch(err => {
+        if (err.name === 'AbortError') {
+          deliverError('Session request timed out. Please try again.');
+        } else {
+          deliverError('Network error during sign-in. Please try again.');
+        }
+      });
+  }
+
+  // ── Main ──────────────────────────────────────────────────────────────────
+  const { access, refresh, error } = extractFromUrl();
+
+  if (error) {
+    // Decode URL-encoded error message from allauth / Google
+    const decoded = decodeURIComponent(String(error).replace(/\+/g, ' '));
+    deliverError(decoded);
+    return;
+  }
+
+  if (access) {
+    deliverTokens(access, refresh);
+    return;
+  }
+
+  // No tokens and no error — try the session endpoint as a fallback
+  trySessionFallback();
+
+})();
+</script>
+</body>
+</html>

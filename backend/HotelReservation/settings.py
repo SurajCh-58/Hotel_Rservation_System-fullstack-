@@ -1,5 +1,5 @@
-from pathlib import Path
 import os
+from pathlib import Path
 import environ
 from corsheaders.defaults import default_headers
 
@@ -8,10 +8,12 @@ env = environ.Env()
 environ.Env.read_env(os.path.join(BASE_DIR, '.env'))
 
 SECRET_KEY = env('DJANGO_SECRET_KEY')
-
 DEBUG = env.bool('DEBUG', default=False)
-
 ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=['localhost', '127.0.0.1'])
+
+# ==============================================================================
+# APPLICATION DEFINITION
+# ==============================================================================
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -20,14 +22,18 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+
+    # Third-party apps
     'corsheaders',
-    'profile.apps.AccountConfig',
     'rest_framework',
     'allauth',
     'allauth.account',
     'allauth.headless',
     'allauth.socialaccount',
     'allauth.socialaccount.providers.google',
+
+    # Local apps
+    'profile.apps.AccountConfig',
 ]
 
 AUTH_USER_MODEL = 'profile.User'
@@ -43,31 +49,6 @@ MIDDLEWARE = [
     'allauth.account.middleware.AccountMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-]
-
-CORS_ALLOWED_ORIGINS = [
-    'http://localhost',
-    'http://localhost:5500',
-]
-
-CORS_ALLOW_HEADERS = (
-    *default_headers,
-    "x-session-token",
-    "x-email-verification-key",
-    "x-password-reset-key",
-)
-
-# Expose X-Session-Token so frontend JS can read it from the signup response.
-# Without this, res.headers.get('X-Session-Token') returns null in the browser.
-CORS_EXPOSE_HEADERS = ["X-Session-Token"]
-
-HEADLESS_SERVE_SPECIFICATION = True
-
-CORS_ALLOW_CREDENTIALS = True
-
-CSRF_TRUSTED_ORIGINS = [
-    'http://localhost',
-    'http://localhost:5500',
 ]
 
 ROOT_URLCONF = 'HotelReservation.urls'
@@ -88,12 +69,97 @@ TEMPLATES = [
     },
 ]
 
+WSGI_APPLICATION = 'HotelReservation.wsgi.application'
+
 AUTHENTICATION_BACKENDS = [
     'django.contrib.auth.backends.ModelBackend',
     'allauth.account.auth_backends.AuthenticationBackend',
 ]
 
-# ============ SOCIAL ACCOUNT ============
+# ==============================================================================
+# CORS & CSRF CONFIGURATION
+# ==============================================================================
+
+CORS_ALLOWED_ORIGINS = [
+    'http://localhost',
+    'http://localhost:5500',
+]
+
+CORS_ALLOW_CREDENTIALS = True
+
+CORS_ALLOW_HEADERS = (
+    *default_headers,
+    "x-session-token",
+    "X-Session-Token",
+    "x-email-verification-key",
+    "x-password-reset-key",
+    "x-password-reset-code",
+)
+
+CORS_EXPOSE_HEADERS = [
+    "X-Session-Token",
+    "x-session-token",
+]
+
+CSRF_TRUSTED_ORIGINS = [
+    'http://localhost',
+    'http://localhost:5500',
+]
+
+# Expose headless OpenAPI spec strictly during debug mode
+HEADLESS_SERVE_SPECIFICATION = DEBUG
+
+# ==============================================================================
+# DJANGO ALLAUTH CONFIGURATION (v65.19+ Headless App Strategy)
+# ==============================================================================
+
+ACCOUNT_LOGIN_METHODS = {"email"}
+ACCOUNT_EMAIL_REQUIRED = True
+ACCOUNT_USERNAME_REQUIRED = False
+ACCOUNT_USER_MODEL_USERNAME_FIELD = "username"
+ACCOUNT_EMAIL_VERIFICATION = "mandatory"
+
+# ── Signup & Email OTP ────────────────────────────────────────────────────────
+ACCOUNT_EMAIL_VERIFICATION_BY_CODE_ENABLED = True
+ACCOUNT_EMAIL_VERIFICATION_BY_CODE_MAX_ATTEMPTS = 5
+ACCOUNT_EMAIL_VERIFICATION_BY_CODE_TIMEOUT = 3600  # seconds
+ACCOUNT_EMAIL_VERIFICATION_SUPPORTS_RESEND = True
+ACCOUNT_LOGIN_ON_EMAIL_CONFIRMATION = True
+
+# ── Password Reset OTP ────────────────────────────────────────────────────────
+ACCOUNT_PASSWORD_RESET_BY_CODE_ENABLED = True
+ACCOUNT_PASSWORD_RESET_TOKEN_FLOW = "code"
+ACCOUNT_PASSWORD_RESET_BY_CODE_MAX_ATTEMPTS = 5   # lock out after 5 wrong guesses
+ACCOUNT_PASSWORD_RESET_BY_CODE_TIMEOUT = 900       # code expires after 15 minutes
+# Log the user in automatically after a successful password reset.
+# allauth returns 200 + JWT tokens (instead of 401 + redirect to login).
+ACCOUNT_LOGIN_ON_PASSWORD_RESET = True
+
+
+# ── Custom Adapters & Forms ───────────────────────────────────────────────────
+ACCOUNT_ADAPTER = "profile.adapter.CustomAccountAdapter"
+ACCOUNT_SIGNUP_FORM_CLASS = "profile.forms.CustomSignupForm"
+ACCOUNT_SIGNUP_FIELDS = ["email*", "password1*"]
+
+# ── Headless Frontend URLs ────────────────────────────────────────────────────
+HEADLESS_FRONTEND_URLS = {
+    "account_confirm_email": "http://localhost/account/verify-email/{key}",
+    "account_reset_password_from_key": "http://localhost/account/password/reset/key/{key}",
+}
+
+# ── Headless Client & Token Strategy (JWT) ────────────────────────────────────
+HEADLESS_CLIENTS = ("app",)
+
+HEADLESS_TOKEN_STRATEGY = (
+    "allauth.headless.tokens.strategies.jwt.JWTTokenStrategy"
+)
+
+HEADLESS_JWT_PRIVATE_KEY = env("ALLAUTH_JWT_PRIVATE_KEY").replace("\\n", "\n")
+HEADLESS_JWT_ACCESS_TOKEN_EXPIRES_IN = 3600
+HEADLESS_JWT_REFRESH_TOKEN_EXPIRES_IN = 86400 * 7
+HEADLESS_JWT_ROTATE_REFRESH_TOKEN = True
+
+# ── Social Account Providers ──────────────────────────────────────────────────
 SOCIALACCOUNT_PROVIDERS = {
     'google': {
         'APP': {
@@ -106,66 +172,10 @@ SOCIALACCOUNT_PROVIDERS = {
     }
 }
 
-# ============ ALLAUTH ============
-# ==============================
-# ALLAUTH
-# ==============================
+# ==============================================================================
+# DJANGO REST FRAMEWORK (DRF)
+# ==============================================================================
 
-ACCOUNT_LOGIN_METHODS = {"email"}
-
-ACCOUNT_USER_MODEL_USERNAME_FIELD = "username"
-
-ACCOUNT_EMAIL_VERIFICATION = "mandatory"
-
-ACCOUNT_EMAIL_VERIFICATION_BY_CODE_ENABLED = True
-
-ACCOUNT_PASSWORD_RESET_BY_CODE = True
-
-ACCOUNT_LOGIN_ON_EMAIL_CONFIRMATION = True
-
-ACCOUNT_EMAIL_VERIFICATION_BY_CODE_MAX_ATTEMPTS = 5
-
-ACCOUNT_ADAPTER = "profile.adapter.CustomAccountAdapter"
-
-ACCOUNT_SIGNUP_FORM_CLASS = "profile.forms.CustomSignupForm"
-
-ACCOUNT_SIGNUP_FIELDS = ["email*", "password1*"]
-
-ACCOUNT_EMAIL_VERIFICATION_BY_CODE_TIMEOUT = 3600  # seconds (default is 180 = 3 minutes)
-
-ACCOUNT_EMAIL_VERIFICATION_SUPPORTS_RESEND = True  # enables POST /auth/email/verify/resend
-
-ACCOUNT_EMAIL_VERIFICATION_BY_CODE_FORMAT = {
-    "numeric": True,
-    "dashed": False,
-    "length": 6,
-}
-# ============ EMAIL ============
-# OTP prints in docker logs — run: docker compose logs web --tail=50
-EMAIL_BACKEND = env('EMAIL_BACKEND', default='django.core.mail.backends.console.EmailBackend')
-
-# ============ HEADLESS JWT ============
-# ==============================
-# HEADLESS JWT
-# ==============================
-
-HEADLESS_CLIENTS = ("app",)
-
-HEADLESS_TOKEN_STRATEGY = (
-    "allauth.headless.tokens.strategies.jwt.JWTTokenStrategy"
-)
-
-HEADLESS_JWT_PRIVATE_KEY = env(
-    "ALLAUTH_JWT_PRIVATE_KEY"
-).replace("\\n", "\n")
-
-HEADLESS_JWT_ACCESS_TOKEN_EXPIRES_IN = 3600
-
-HEADLESS_JWT_REFRESH_TOKEN_EXPIRES_IN = 86400 * 7
-
-HEADLESS_JWT_ROTATE_REFRESH_TOKEN = True
-
-# ============ DRF ============
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'allauth.headless.contrib.rest_framework.authentication.JWTTokenAuthentication',
@@ -173,13 +183,26 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
     ],
+    'DEFAULT_PARSER_CLASSES': [
+        'rest_framework.parsers.MultiPartParser',
+        'rest_framework.parsers.FormParser',
+        'rest_framework.parsers.JSONParser',
+    ],
 }
 
-WSGI_APPLICATION = 'HotelReservation.wsgi.application'
+# ==============================================================================
+# DATABASE & EMAIL
+# ==============================================================================
 
 DATABASES = {
     'default': env.db('DATABASE_URL')
 }
+
+EMAIL_BACKEND = env('EMAIL_BACKEND', default='django.core.mail.backends.console.EmailBackend')
+
+# ==============================================================================
+# PASSWORDS, INTERNATIONALIZATION & TIMEZONE
+# ==============================================================================
 
 AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
@@ -189,17 +212,32 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 LANGUAGE_CODE = 'en-us'
-TIME_ZONE     = 'UTC'
-USE_I18N      = True
-USE_TZ        = True
+TIME_ZONE = 'UTC'
+USE_I18N = True
+USE_TZ = True
 
-# ============ STATIC FILES ============
-STATIC_URL  = '/static/'
+# ==============================================================================
+# STATIC & MEDIA FILES
+# ==============================================================================
+
+STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
-# ============ MEDIA ============
-MEDIA_URL  = '/media/'
+MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# ==============================================================================
+# PRODUCTION SECURITY FLAGS
+# ==============================================================================
+
+if not DEBUG:
+    SECURE_SSL_REDIRECT = True
+    SECURE_HSTS_SECONDS = 31536000  # 1 year
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
