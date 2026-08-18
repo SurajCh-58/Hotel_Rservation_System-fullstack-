@@ -3,13 +3,25 @@ from pathlib import Path
 import environ
 from corsheaders.defaults import default_headers
 
+# ==============================================================================
+# ENVIRONMENT & BASE DIRECTORY SETUP
+# ==============================================================================
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 env = environ.Env()
 environ.Env.read_env(os.path.join(BASE_DIR, '.env'))
 
+# ==============================================================================
+# CORE DJANGO CONFIGURATION
+# ==============================================================================
+
 SECRET_KEY = env('DJANGO_SECRET_KEY')
 DEBUG = env.bool('DEBUG', default=False)
 ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=['localhost', '127.0.0.1'])
+
+ROOT_URLCONF = 'HotelReservation.urls'
+WSGI_APPLICATION = 'HotelReservation.wsgi.application'
+DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # ==============================================================================
 # APPLICATION DEFINITION
@@ -36,8 +48,6 @@ INSTALLED_APPS = [
     'profile.apps.AccountConfig',
 ]
 
-AUTH_USER_MODEL = 'profile.User'
-
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'corsheaders.middleware.CorsMiddleware',
@@ -50,8 +60,6 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
-
-ROOT_URLCONF = 'HotelReservation.urls'
 
 TEMPLATES = [
     {
@@ -69,11 +77,22 @@ TEMPLATES = [
     },
 ]
 
-WSGI_APPLICATION = 'HotelReservation.wsgi.application'
+# ==============================================================================
+# AUTHENTICATION & USER MODEL
+# ==============================================================================
+
+AUTH_USER_MODEL = 'profile.User'
 
 AUTHENTICATION_BACKENDS = [
     'django.contrib.auth.backends.ModelBackend',
     'allauth.account.auth_backends.AuthenticationBackend',
+]
+
+AUTH_PASSWORD_VALIDATORS = [
+    {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
 ]
 
 # ==============================================================================
@@ -83,18 +102,19 @@ AUTHENTICATION_BACKENDS = [
 CORS_ALLOWED_ORIGINS = [
     'http://localhost',
     'http://localhost:5500',
+    'http://localhost:8000',
 ]
 
 CORS_ALLOW_CREDENTIALS = True
 
-CORS_ALLOW_HEADERS = (
+CORS_ALLOW_HEADERS = [
     *default_headers,
     "x-session-token",
     "X-Session-Token",
     "x-email-verification-key",
     "x-password-reset-key",
     "x-password-reset-code",
-)
+]
 
 CORS_EXPOSE_HEADERS = [
     "X-Session-Token",
@@ -104,10 +124,8 @@ CORS_EXPOSE_HEADERS = [
 CSRF_TRUSTED_ORIGINS = [
     'http://localhost',
     'http://localhost:5500',
+    'http://localhost:8000',
 ]
-
-# Expose headless OpenAPI spec strictly during debug mode
-HEADLESS_SERVE_SPECIFICATION = DEBUG
 
 # ==============================================================================
 # DJANGO ALLAUTH CONFIGURATION (v65.19+ Headless App Strategy)
@@ -118,6 +136,7 @@ ACCOUNT_EMAIL_REQUIRED = True
 ACCOUNT_USERNAME_REQUIRED = False
 ACCOUNT_USER_MODEL_USERNAME_FIELD = "username"
 ACCOUNT_EMAIL_VERIFICATION = "mandatory"
+ACCOUNT_PREVENT_ENUMERATION = False
 
 # ── Signup & Email OTP ────────────────────────────────────────────────────────
 ACCOUNT_EMAIL_VERIFICATION_BY_CODE_ENABLED = True
@@ -130,22 +149,20 @@ ACCOUNT_LOGIN_ON_EMAIL_CONFIRMATION = True
 ACCOUNT_PASSWORD_RESET_BY_CODE_ENABLED = True
 ACCOUNT_PASSWORD_RESET_TOKEN_FLOW = "code"
 ACCOUNT_PASSWORD_RESET_BY_CODE_MAX_ATTEMPTS = 5   # lock out after 5 wrong guesses
-ACCOUNT_PASSWORD_RESET_BY_CODE_TIMEOUT = 900       # code expires after 15 minutes
-# Log the user in automatically after a successful password reset.
-# allauth returns 200 + JWT tokens (instead of 401 + redirect to login).
+ACCOUNT_PASSWORD_RESET_BY_CODE_TIMEOUT = 900      # code expires after 15 minutes
 ACCOUNT_LOGIN_ON_PASSWORD_RESET = True
-
 
 # ── Custom Adapters & Forms ───────────────────────────────────────────────────
 ACCOUNT_ADAPTER = "profile.adapter.CustomAccountAdapter"
 ACCOUNT_SIGNUP_FORM_CLASS = "profile.forms.CustomSignupForm"
 ACCOUNT_SIGNUP_FIELDS = ["email*", "password1*"]
 
-# ── Headless Frontend URLs ────────────────────────────────────────────────────
+# ── Headless Frontend URLs & Core Spec ────────────────────────────────────────
 HEADLESS_FRONTEND_URLS = {
     "account_confirm_email": "http://localhost/account/verify-email/{key}",
     "account_reset_password_from_key": "http://localhost/account/password/reset/key/{key}",
 }
+HEADLESS_SERVE_SPECIFICATION = DEBUG
 
 # ── Headless Client & Token Strategy (JWT) ────────────────────────────────────
 HEADLESS_CLIENTS = ("app",)
@@ -160,6 +177,10 @@ HEADLESS_JWT_REFRESH_TOKEN_EXPIRES_IN = 86400 * 7
 HEADLESS_JWT_ROTATE_REFRESH_TOKEN = True
 
 # ── Social Account Providers ──────────────────────────────────────────────────
+# ==============================================================================
+# ── Social Account Providers ──────────────────────────────────────────────────
+# ==============================================================================
+
 SOCIALACCOUNT_PROVIDERS = {
     'google': {
         'APP': {
@@ -167,8 +188,12 @@ SOCIALACCOUNT_PROVIDERS = {
             'secret': env('GOOGLE_CLIENT_SECRET'),
             'key': ''
         },
-        'SCOPE': ['profile', 'email'],
-        'AUTH_PARAMS': {'access_type': 'online'},
+        'scope': ['profile', 'email'],
+        'auth_params': {
+            'access_type': 'online',
+            'prompt': 'select_account consent',
+        },
+        'fetch_userinfo': True,
     }
 }
 
@@ -201,15 +226,8 @@ DATABASES = {
 EMAIL_BACKEND = env('EMAIL_BACKEND', default='django.core.mail.backends.console.EmailBackend')
 
 # ==============================================================================
-# PASSWORDS, INTERNATIONALIZATION & TIMEZONE
+# INTERNATIONALIZATION & TIMEZONE
 # ==============================================================================
-
-AUTH_PASSWORD_VALIDATORS = [
-    {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
-    {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator'},
-    {'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator'},
-    {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
-]
 
 LANGUAGE_CODE = 'en-us'
 TIME_ZONE = 'UTC'
@@ -226,8 +244,6 @@ STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
-
-DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # ==============================================================================
 # PRODUCTION SECURITY FLAGS

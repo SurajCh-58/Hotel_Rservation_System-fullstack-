@@ -18,11 +18,11 @@ class UserUpdateView(RetrieveUpdateAPIView):
     serializer_class = ProfileSerializer
     authentication_classes = [JWTTokenAuthentication]
     permission_classes = [IsAuthenticated]
-    parser_classes = [MultiPartParser, FormParser, JSONParser]  # explicit; guarantees files are parsed
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def get_object(self):
         return self.request.user.profile
 
     def partial_update(self, request, *args, **kwargs):
-        kwargs['partial'] = True          # ensures PATCH is truly partial
+        kwargs['partial'] = True
         return self.update(request, *args, **kwargs)

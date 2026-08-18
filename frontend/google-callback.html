@@ -50,39 +50,50 @@
 
 <script>
 /**
- * google-callback.html  (production-grade)
- * ─────────────────────────────────────────
- * Receives the OAuth redirect from allauth after Google authentication,
- * extracts JWT tokens, and sends them to the parent window via postMessage.
- *
- * SECURITY NOTES:
- *  - postMessage target is always window.location.origin (never '*')
- *  - Tokens are never written to the DOM or logged
- *  - The popup auto-closes after delivering or erroring
- *  - All paths either resolve or reject, so the popup never hangs open
+ * google-callback.html
+ * ─────────────────────────────────────────────────────────────
+ * Landing page after allauth's Google OAuth browser flow.
  *
  * FLOW:
- *  1. allauth processes the OAuth code server-side, creates/logs in the user,
- *     and redirects this popup to:
- *     /google-callback.html#access_token=JWT&refresh_token=JWT
- *     OR /google-callback.html?access_token=JWT&refresh_token=JWT
- *  2. We parse the URL, validate the tokens, and postMessage to opener.
- *  3. If no tokens are in the URL we attempt a session fetch as a fallback.
- *  4. Parent tab receives GOOGLE_AUTH message, stores tokens, shows the app.
- *  5. This popup closes itself.
+ *  1. Parent opens /accounts/google/login/?process=login in a popup.
+ *  2. allauth handles the OAuth server-side, logs in the user with a
+ *     Django browser session, redirects popup here.
+ *  3. We call GET /_allauth/browser/v1/auth/session (cookie sent
+ *     automatically) → returns meta.session_token.
+ *  4. We call GET /_allauth/app/v1/auth/session with
+ *     X-Session-Token header → returns JWT access + refresh tokens.
+ *  5. postMessage tokens to parent → parent stores them → showApp().
+ *
+ * WHY TWO STEPS?
+ *   Chrome blocks SameSite=None cookies on HTTP (no Secure flag).
+ *   The browser client's /auth/session returns a session_token in JSON
+ *   (not a cookie) that we can pass as a header to the app client.
+ *   This avoids relying on the session cookie surviving cross-context.
+ *
+ * NOTE on SOCIALACCOUNT_LOGIN_ON_GET = False:
+ *   allauth may redirect to /accounts/google/login/ first and render
+ *   a confirmation form (Cancel / Continue). If this page is loaded
+ *   with a ?next= param and contains that form, we auto-submit it so
+ *   the popup flows straight through to Google without user action.
+ *   The actual Google account-picker (screenshot) is shown by Google,
+ *   not allauth — it is controlled by AUTH_PARAMS prompt=select_account.
  */
 (function () {
   'use strict';
 
-  const CLOSE_DELAY_MS   = 800;   // Give parent time to process before closing
-  const SESSION_TIMEOUT  = 5000;  // Max ms to wait for session fetch
-
-  // ── UI helpers ────────────────────────────────────────────────────────────
-  function showSuccess() {
-    document.getElementById('spinner').style.borderTopColor = '#16a34a';
-    document.getElementById('title').textContent    = 'Signed in!';
-    document.getElementById('subtitle').textContent = 'Returning you to the app…';
+  // ── Auto-submit allauth's socialaccount confirmation form ─────────────
+  // When SOCIALACCOUNT_LOGIN_ON_GET=False, allauth renders a page with a
+  // form containing a "Continue" button before the Google redirect.
+  // We detect that page and submit it automatically so users see the
+  // real Google account picker (Cancel/Continue) rather than a Django page.
+  const confirmForm = document.querySelector('form[action*="google/login"]');
+  if (confirmForm) {
+    confirmForm.submit();
+    return; // stop — page will redirect to Google
   }
+
+  const CLOSE_DELAY_MS = 800;
+  const FETCH_TIMEOUT  = 10000;
 
   function showError(message) {
     const safeMsg = String(message).replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -94,29 +105,16 @@
     `;
   }
 
-  // ── Token extraction ──────────────────────────────────────────────────────
-  function extractFromUrl() {
-    // allauth may deliver tokens in the fragment (#) or query string (?)
-    const fragment = new URLSearchParams(window.location.hash.substring(1));
-    const query    = new URLSearchParams(window.location.search);
-
-    return {
-      access:  fragment.get('access_token')  || query.get('access_token')  || null,
-      refresh: fragment.get('refresh_token') || query.get('refresh_token') || null,
-      error:   fragment.get('error')         || query.get('error')         || null,
-    };
-  }
-
-  // ── postMessage to parent ─────────────────────────────────────────────────
   function notifyParent(payload) {
     if (window.opener && !window.opener.closed) {
-      // SECURITY: always target own origin, never '*'
       window.opener.postMessage(payload, window.location.origin);
     }
   }
 
   function deliverTokens(access, refresh) {
-    showSuccess();
+    document.getElementById('spinner').style.borderTopColor = '#16a34a';
+    document.getElementById('title').textContent    = 'Signed in!';
+    document.getElementById('subtitle').textContent = 'Returning you to the app…';
     notifyParent({ type: 'GOOGLE_AUTH', access_token: access, refresh_token: refresh || null });
     setTimeout(() => window.close(), CLOSE_DELAY_MS);
   }
@@ -127,57 +125,78 @@
     setTimeout(() => window.close(), 3000);
   }
 
-  // ── Session fallback ──────────────────────────────────────────────────────
-  // If allauth redirects here without tokens in the URL (can happen in some
-  // allauth versions), we ask the server for the current session tokens.
-  function trySessionFallback() {
+  function fetchWithTimeout(url, options) {
     const controller = new AbortController();
-    const timeoutId  = setTimeout(() => controller.abort(), SESSION_TIMEOUT);
-
-    fetch('/_allauth/app/v1/auth/session', {
-      credentials: 'include',
-      signal:      controller.signal,
-    })
-      .then(r => {
-        clearTimeout(timeoutId);
-        if (!r.ok) throw new Error(`Session fetch returned ${r.status}`);
-        return r.json();
-      })
-      .then(data => {
-        const access  = data?.meta?.access_token;
-        const refresh = data?.meta?.refresh_token;
-        if (access) {
-          deliverTokens(access, refresh);
-        } else {
-          deliverError('Could not retrieve tokens from session. Please try again.');
-        }
-      })
-      .catch(err => {
-        if (err.name === 'AbortError') {
-          deliverError('Session request timed out. Please try again.');
-        } else {
-          deliverError('Network error during sign-in. Please try again.');
-        }
-      });
+    const id = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
+    return fetch(url, { ...options, signal: controller.signal })
+      .finally(() => clearTimeout(id));
   }
 
-  // ── Main ──────────────────────────────────────────────────────────────────
-  const { access, refresh, error } = extractFromUrl();
-
-  if (error) {
-    // Decode URL-encoded error message from allauth / Google
-    const decoded = decodeURIComponent(String(error).replace(/\+/g, ' '));
-    deliverError(decoded);
+  // Check for OAuth error passed in URL
+  const query    = new URLSearchParams(window.location.search);
+  const fragment = new URLSearchParams(window.location.hash.substring(1));
+  const urlError = query.get('error') || fragment.get('error');
+  if (urlError) {
+    deliverError(decodeURIComponent(String(urlError).replace(/\+/g, ' ')));
     return;
   }
 
-  if (access) {
-    deliverTokens(access, refresh);
-    return;
-  }
+  (async function main() {
+    try {
 
-  // No tokens and no error — try the session endpoint as a fallback
-  trySessionFallback();
+      // ── STEP 1: browser client → get session_token ─────────────────────
+      // The browser session cookie allauth set during OAuth callback is sent
+      // automatically here (same-site request). The browser client returns
+      // meta.session_token in JSON — no cookie dependency needed after this.
+      const browserRes = await fetchWithTimeout(
+        '/_allauth/browser/v1/auth/session',
+        { credentials: 'include' }
+      );
+
+      const browserData = await browserRes.json().catch(() => ({}));
+      console.log('[callback] browser session:', browserRes.status, browserData);
+
+      const sessionToken = browserData?.meta?.session_token;
+
+      if (!browserRes.ok || !sessionToken) {
+        const detail = browserData?.errors?.[0]?.message
+          || `Sign-in failed (${browserRes.status}). Please try again.`;
+        return deliverError(detail);
+      }
+
+      // ── STEP 2: app client → exchange session_token for JWTs ───────────
+      // Pass the session_token as X-Session-Token header. The app client
+      // reads it, finds the authenticated Django session, and returns
+      // JWT access + refresh tokens. No cookie required for this step.
+      const appRes = await fetchWithTimeout(
+        '/_allauth/app/v1/auth/session',
+        {
+          credentials: 'include',
+          headers: { 'X-Session-Token': sessionToken }
+        }
+      );
+
+      const appData = await appRes.json().catch(() => ({}));
+      console.log('[callback] app session:', appRes.status, appData);
+
+      const access  = appData?.meta?.access_token;
+      const refresh = appData?.meta?.refresh_token;
+
+      if (access) {
+        return deliverTokens(access, refresh);
+      }
+
+      deliverError('No access token returned. Please try again.');
+
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        deliverError('Sign-in timed out. Please try again.');
+      } else {
+        console.error('[callback] error:', err);
+        deliverError('Network error during sign-in. Please try again.');
+      }
+    }
+  })();
 
 })();
 </script>

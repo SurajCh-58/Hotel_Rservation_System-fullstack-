@@ -1,1485 +1,763 @@
+const API_ORIGIN = window.__API_ORIGIN__ || 'http://localhost:8000';
+const ALLAUTH = `${API_ORIGIN}/_allauth/app/v1`;
+
 /* ============================================================
-   api.js – All API calls to the HotelReservation Django backend
-
-   AUTH FLOWS
-   ============================================================
-
-   SIGNUP
-   ------
-   POST /_allauth/app/v1/auth/signup
-        ↓
-   pending verify_email
-        ↓
-   POST /_allauth/app/v1/auth/email/verify
-        ↓
-   JWT access + refresh
-
-
-   PASSWORD RESET
-   --------------
-   POST /_allauth/app/v1/auth/password/request
-        ↓
-   401 + password_reset_by_code pending
-        ↓ allauth saves session_token in meta → stored in sessionStorage
-   user receives OTP
-        ↓
-   POST /_allauth/app/v1/auth/password/reset
-   X-Session-Token: <token from above>
-   {
-     "key": "123456",
-     "password": "new-password"
-   }
-        ↓
-   200 = password changed + logged in
-   401 = password changed + NOT logged in  (ACCOUNT_LOGIN_ON_PASSWORD_RESET=False)
-        ↓
-   frontend sends user to login
-
-   NOTE: The GET /auth/password/reset step has been intentionally removed.
-   It consumed one of the 5 allowed OTP attempts without changing any state.
-   The POST validates the key itself and returns 400 token_invalid on failure.
-
-   IMPORTANT
-   ---------
-   Email verification and resend are intentionally unchanged.
+   TOKEN STORAGE
    ============================================================ */
 
-
-const BASE = '';
-
-const ALLAUTH = '/_allauth/app/v1';
-
-
-// ════════════════════════════════════════════════════════════
-// TOKEN HELPERS
-// ════════════════════════════════════════════════════════════
-
 const Tokens = {
-
   get access() {
-
-    return localStorage.getItem(
-      'access_token'
-    );
-
+    return localStorage.getItem('access_token');
   },
-
 
   get refresh() {
-
-    return localStorage.getItem(
-      'refresh_token'
-    );
-
+    return localStorage.getItem('refresh_token');
   },
-
 
   get sessionToken() {
-
-    return sessionStorage.getItem(
-      'allauth_session_token'
-    );
-
+    return sessionStorage.getItem('allauth_session_token');
   },
 
-
-  set(
-    access,
-    refresh
-  ) {
-
-    if (access) {
-
-      localStorage.setItem(
-        'access_token',
-        access
-      );
-
-    }
-
-
-    if (refresh) {
-
-      localStorage.setItem(
-        'refresh_token',
-        refresh
-      );
-
-    }
-
+  set(access, refresh) {
+    if (access) localStorage.setItem('access_token', access);
+    if (refresh) localStorage.setItem('refresh_token', refresh);
   },
 
-
-  setSession(token) {
-
+  session(token) {
     if (token) {
-
-      sessionStorage.setItem(
-        'allauth_session_token',
-        token
-      );
-
+      sessionStorage.setItem('allauth_session_token', token);
     } else {
-
-      sessionStorage.removeItem(
-        'allauth_session_token'
-      );
-
+      sessionStorage.removeItem('allauth_session_token');
     }
-
   },
-
 
   clear() {
+    localStorage.removeItem('access_token');
+    localStorage.removeItem('refresh_token');
 
-    localStorage.removeItem(
-      'access_token'
-    );
-
-
-    localStorage.removeItem(
-      'refresh_token'
-    );
-
-
-    sessionStorage.removeItem(
-      'allauth_session_token'
-    );
-
-
-    sessionStorage.removeItem(
-      'password_reset_email'
-    );
-
-
-    sessionStorage.removeItem(
-      'password_reset_key'
-    );
-
+    sessionStorage.removeItem('allauth_session_token');
+    sessionStorage.removeItem('password_reset_email');
+    sessionStorage.removeItem('password_reset_key');
   },
 
-
+  /* app.js uses this name */
   isLoggedIn() {
-
     return !!this.access;
+  },
 
+  /* Keep compatibility if any code uses the old name */
+  loggedIn() {
+    return this.isLoggedIn();
   }
-
 };
 
 
-// ════════════════════════════════════════════════════════════
-// CSRF HELPER
-// ════════════════════════════════════════════════════════════
+/* ============================================================
+   HELPERS
+   ============================================================ */
 
-function getCsrfToken() {
-
-  return document.cookie
+const csrf = () =>
+  document.cookie
     .split('; ')
-    .find(
-      row =>
-        row.startsWith(
-          'csrftoken='
-        )
-    )
-    ?.split('=')[1] ?? '';
+    .find(x => x.startsWith('csrftoken='))
+    ?.split('=')[1] || '';
 
-}
-
-
-// ════════════════════════════════════════════════════════════
-// CORE FETCH WRAPPER
-// ════════════════════════════════════════════════════════════
-
-async function apiFetch(
-  url,
-  options = {}
-) {
-
-  /*
-   * Internal frontend option.
-   *
-   * Prevents the signup/allauth session token from
-   * being sent to independent password-reset requests.
-   */
-
-  const {
-    skipSessionToken = false,
-    ...fetchOptions
-  } = options;
+const json = async response => {
+  try {
+    return await response.json();
+  } catch {
+    return null;
+  }
+};
 
 
-  const headers = {
+/* ============================================================
+   SAVE ALLAUTH TOKENS
+   ============================================================ */
 
-    'Content-Type':
-      'application/json',
+const saveTokens = response => {
+  const meta = response?.meta || {};
+  const data = response?.data || {};
 
-    'X-CSRFToken':
-      getCsrfToken(),
+  const access =
+    meta.access_token ??
+    data.access_token ??
+    response?.access_token;
 
-    ...(fetchOptions.headers || {})
+  const refresh =
+    meta.refresh_token ??
+    data.refresh_token ??
+    response?.refresh_token;
 
-  };
+  const session =
+    meta.session_token ??
+    data.session_token ??
+    response?.session_token;
 
-
-  // ──────────────────────────────────────────────────────────
-  // JWT ACCESS TOKEN
-  // ──────────────────────────────────────────────────────────
-
-  if (
-    Tokens.access
-  ) {
-
-    headers['Authorization'] =
-      `Bearer ${Tokens.access}`;
-
+  if (access || refresh) {
+    Tokens.set(access, refresh);
   }
 
+  if (session !== undefined) {
+    Tokens.session(session);
+  }
+};
 
-  // ──────────────────────────────────────────────────────────
-  // ALLAUTH SESSION TOKEN
-  // ──────────────────────────────────────────────────────────
 
+/* ============================================================
+   API FETCH
+   ============================================================ */
+
+async function apiFetch(url, opts = {}) {
+  const {
+    skipSessionToken = false,
+    skipAuth = false,
+    ...options
+  } = opts;
+
+  const isAllauth = url.includes('/_allauth/');
+
+  const headers = {
+    'Content-Type': 'application/json',
+    'X-CSRFToken': csrf(),
+    ...(options.headers || {})
+  };
+
+  /*
+   * Application JWT is sent only to application APIs.
+   *
+   * DO NOT send the Google OAuth access token here.
+   */
   if (
+    !skipAuth &&
+    Tokens.access &&
+    !isAllauth
+  ) {
+    headers.Authorization = `Bearer ${Tokens.access}`;
+  }
+
+  /*
+   * Allauth session token is sent only to allauth.
+   */
+  if (
+    isAllauth &&
     Tokens.sessionToken &&
     !skipSessionToken
   ) {
-
-    headers['X-Session-Token'] =
-      Tokens.sessionToken;
-
+    headers['X-Session-Token'] = Tokens.sessionToken;
   }
 
+  let response = await fetch(url, {
+    credentials: 'include',
+    ...options,
+    headers
+  });
 
-  const res =
-    await fetch(
-      url,
-      {
-        credentials: 'include',
-        ...fetchOptions,
-        headers
-      }
-    );
+  let data = await json(response);
 
-
-  // ──────────────────────────────────────────────────────────
-  // PARSE RESPONSE
-  // ──────────────────────────────────────────────────────────
-
-  let data = null;
-
-
-  try {
-
-    data =
-      await res.json();
-
-  } catch (_) {
-
-    data = null;
-
+  /*
+   * allauth may return a session token.
+   */
+  if (data?.meta?.session_token !== undefined) {
+    Tokens.session(data.meta.session_token);
   }
 
-
-  // ──────────────────────────────────────────────────────────
-  // SAVE ALLAUTH SESSION TOKEN
-  // ──────────────────────────────────────────────────────────
-
+  /*
+   * Refresh application JWT after a 401.
+   */
   if (
-    data?.meta?.session_token !== undefined
-  ) {
-
-    Tokens.setSession(
-      data.meta.session_token
-    );
-
-  }
-
-
-  // ──────────────────────────────────────────────────────────
-  // AUTO REFRESH JWT
-  //
-  // Do not refresh allauth endpoints.
-  // Their 401 responses can be intentional.
-  // ──────────────────────────────────────────────────────────
-
-  const isAllauthEndpoint =
-    url.includes(
-      '/_allauth/'
-    );
-
-
-  if (
-    res.status === 401 &&
+    response.status === 401 &&
     Tokens.refresh &&
-    !url.includes(
-      'token/refresh'
-    ) &&
-    !isAllauthEndpoint
+    !isAllauth &&
+    !url.includes('/tokens/refresh') &&
+    !skipAuth
   ) {
+    const refreshed = await API.auth.refreshToken();
 
-    const refreshed =
-      await API.auth.refreshToken();
+    if (refreshed.ok && Tokens.access) {
+      headers.Authorization =
+        `Bearer ${Tokens.access}`;
 
+      response = await fetch(url, {
+        credentials: 'include',
+        ...options,
+        headers
+      });
 
-    if (
-      refreshed.ok
-    ) {
-
-      const retryHeaders = {
-
-        ...headers,
-
-        'Authorization':
-          `Bearer ${Tokens.access}`
-
-      };
-
-
-      const retry =
-        await fetch(
-          url,
-          {
-            credentials: 'include',
-            ...fetchOptions,
-            headers: retryHeaders
-          }
-        );
-
-
-      let retryData = null;
-
-
-      try {
-
-        retryData =
-          await retry.json();
-
-      } catch (_) {}
-
-
-      return {
-
-        ok:
-          retry.ok,
-
-        status:
-          retry.status,
-
-        data:
-          retryData
-
-      };
-
+      data = await json(response);
     }
-
   }
-
 
   return {
-
-    ok:
-      res.ok,
-
-    status:
-      res.status,
-
+    ok: response.ok,
+    status: response.status,
     data
-
   };
-
 }
 
 
-// ════════════════════════════════════════════════════════════
-// API
-// ════════════════════════════════════════════════════════════
+/* ============================================================
+   API
+   ============================================================ */
 
 const API = {
 
-
-  // ══════════════════════════════════════════════════════════
-  // AUTH
-  // ══════════════════════════════════════════════════════════
-
   auth: {
 
+    /* ========================================================
+       SIGNUP
+       ======================================================== */
 
-    // ────────────────────────────────────────────────────────
-    // SIGN UP
-    // ────────────────────────────────────────────────────────
-
-    async signup({
+    signup: ({
       email,
       password,
       full_name
-    }) {
+    }) =>
+      apiFetch(`${ALLAUTH}/auth/signup`, {
+        method: 'POST',
+        skipSessionToken: true,
+        body: JSON.stringify({
+          email,
+          password,
+          full_name
+        })
+      }),
 
-      return apiFetch(
-        `${ALLAUTH}/auth/signup`,
+
+    /* ========================================================
+       LOGIN
+       ======================================================== */
+
+    async login({ email, password }) {
+      const r = await apiFetch(
+        `${ALLAUTH}/auth/login`,
         {
-
           method: 'POST',
-
-          body:
-            JSON.stringify({
-
-              email,
-
-              password,
-
-              full_name
-
-            })
-
+          skipSessionToken: true,
+          body: JSON.stringify({
+            email,
+            password
+          })
         }
       );
 
-    },
-
-
-    // ────────────────────────────────────────────────────────
-    // LOGIN
-    // ────────────────────────────────────────────────────────
-
-    async login({
-      email,
-      password
-    }) {
-
-      const res =
-        await apiFetch(
-          `${ALLAUTH}/auth/login`,
-          {
-
-            method: 'POST',
-
-            body:
-              JSON.stringify({
-
-                email,
-
-                password
-
-              })
-
-          }
-        );
-
-
-      if (
-        res.ok
-      ) {
-
-        Tokens.set(
-
-          res.data
-            ?.meta
-            ?.access_token,
-
-          res.data
-            ?.meta
-            ?.refresh_token
-
-        );
-
+      if (r.ok) {
+        saveTokens(r.data);
       }
 
-
-      return res;
-
+      return r;
     },
 
 
-    // ────────────────────────────────────────────────────────
-    // VERIFY EMAIL OTP
-    //
-    // DO NOT CHANGE.
-    // ────────────────────────────────────────────────────────
+    /* ========================================================
+       EMAIL VERIFICATION
+       ======================================================== */
 
-    async verifyEmail(code) {
+    async verifyEmail(key) {
+      const r = await apiFetch(
+        `${ALLAUTH}/auth/email/verify`,
+        {
+          method: 'POST',
+          skipSessionToken: true,
+          body: JSON.stringify({ key })
+        }
+      );
 
-      const res =
-        await apiFetch(
-          `${ALLAUTH}/auth/email/verify`,
-          {
-
-            method: 'POST',
-
-            body:
-              JSON.stringify({
-
-                key:
-                  code
-
-              })
-
-          }
-        );
-
-
-      if (
-        res.ok
-      ) {
-
-        Tokens.set(
-
-          res.data
-            ?.meta
-            ?.access_token,
-
-          res.data
-            ?.meta
-            ?.refresh_token
-
-        );
-
-
-        Tokens.setSession(
-          null
-        );
-
+      if (r.ok) {
+        saveTokens(r.data);
+        Tokens.session();
       }
 
-
-      return res;
-
+      return r;
     },
 
 
-    // ────────────────────────────────────────────────────────
-    // RESEND EMAIL VERIFICATION
-    //
-    // DO NOT CHANGE.
-    // ────────────────────────────────────────────────────────
+    /* ========================================================
+       RESEND EMAIL VERIFICATION
+       ======================================================== */
 
-    async resendVerification() {
-
-      return apiFetch(
+    resendVerification: () =>
+      apiFetch(
         `${ALLAUTH}/auth/email/verify/resend`,
         {
-
           method: 'POST'
-
         }
-      );
-
-    },
+      ),
 
 
-    // ────────────────────────────────────────────────────────
-    // LOGOUT
-    // ────────────────────────────────────────────────────────
+    /* ========================================================
+       LOGOUT
+       ======================================================== */
 
     async logout() {
-
-      const res =
-        await apiFetch(
-          `${ALLAUTH}/auth/logout`,
-          {
-
-            method: 'DELETE'
-
-          }
-        );
-
+      const r = await apiFetch(
+        `${ALLAUTH}/auth/session`,
+        {
+          method: 'DELETE'
+        }
+      );
 
       Tokens.clear();
 
-
-      return res;
-
+      return r;
     },
 
 
-    // ════════════════════════════════════════════════════════
-    // PASSWORD RESET
-    // ════════════════════════════════════════════════════════
+    /* ========================================================
+       PASSWORD RESET REQUEST
+       ======================================================== */
 
+    async requestPasswordReset(email) {
+      email = String(email || '').trim();
 
-    // ────────────────────────────────────────────────────────
-    // REQUEST PASSWORD RESET
-    // ────────────────────────────────────────────────────────
-
-    async requestPasswordReset(
-      email
-    ) {
-
-      const cleanEmail =
-        String(
-          email || ''
-        ).trim();
-
-
-      if (
-        !cleanEmail
-      ) {
-
+      if (!email) {
         return {
-
           ok: false,
-
           status: 400,
-
           data: {
-
-            errors: [
-
-              {
-
-                code:
-                  'required',
-
-                param:
-                  'email',
-
-                message:
-                  'Email is required.'
-
-              }
-
-            ]
-
+            errors: [{
+              code: 'required',
+              param: 'email',
+              message: 'Email is required.'
+            }]
           }
-
         };
-
       }
 
-
-      /*
-       * Password reset is independent from signup
-       * email verification.
-       *
-       * Do NOT send X-Session-Token.
-       */
-
-      const res =
-        await apiFetch(
-          `${ALLAUTH}/auth/password/request`,
-          {
-
-            method: 'POST',
-
-            skipSessionToken: true,
-
-            body:
-              JSON.stringify({
-
-                email:
-                  cleanEmail
-
-              })
-
-          }
-        );
-
-
-      /*
-       * When password reset by code is enabled,
-       * allauth may return 401 with a pending flow.
-       *
-       * That means the reset flow has started.
-       */
-
-      const pending =
-        res.data?.data?.flows?.some(
-          flow =>
-            flow.id ===
-              'password_reset_by_code' &&
-            flow.is_pending
-        );
-
-
-      if (
-        res.ok ||
-        pending
-      ) {
-
-        sessionStorage.setItem(
-          'password_reset_email',
-          cleanEmail
-        );
-
-      }
-
-
-      return res;
-
-    },
-
-
-    // ────────────────────────────────────────────────────────
-    // VERIFY PASSWORD RESET CODE (OTP)
-    //
-    // GET /auth/password/reset
-    // Header: X-Password-Reset-Key: <6-digit code>
-    //         X-Session-Token: <token from /password/request 401>
-    //
-    // Returns:
-    //   200 → code is valid, user info returned
-    //   400 → code is wrong (token_invalid) — attempt used
-    //   409 → no pending flow (session expired)
-    //
-    // This is the correct way to verify the OTP before showing
-    // the password fields. It does consume one attempt, which is
-    // intentional — wrong guesses should cost attempts.
-    // ────────────────────────────────────────────────────────
-
-    async verifyPasswordResetCode(key) {
-
-      const cleanKey =
-        String(key || '').trim();
-
-      console.log(
-        '[AUTH] VERIFY RESET CODE:',
-        { key: cleanKey }
-      );
-
-      return apiFetch(
-        `${ALLAUTH}/auth/password/reset`,
+      const r = await apiFetch(
+        `${ALLAUTH}/auth/password/request`,
         {
-          method: 'GET',
-          headers: {
-            'X-Password-Reset-Key': cleanKey
-          }
+          method: 'POST',
+          skipSessionToken: true,
+          body: JSON.stringify({ email })
         }
       );
 
+      const pending =
+        r.data?.data?.flows?.some(
+          f =>
+            f.id === 'password_reset_by_code' &&
+            f.is_pending
+        );
+
+      if (r.ok || pending) {
+        sessionStorage.setItem(
+          'password_reset_email',
+          email
+        );
+      }
+
+      return r;
     },
 
 
-    // ────────────────────────────────────────────────────────
-    // RESET PASSWORD
-    //
-    // POST:
-    //
-    // {
-    //   "key": "123456",
-    //   "password": "new-password"
-    // }
-    //
-    // IMPORTANT:
-    //
-    // X-Session-Token MUST be sent here (not skipped).
-    //
-    // The password_reset_by_code flow is stateful — allauth
-    // needs the session token from the 401 returned by
-    // POST /auth/password/request to locate the pending flow.
-    // Without it, allauth returns 409 (no pending flow).
-    //
-    // allauth can return:
-    //
-    // 200 = password reset + authenticated
-    //
-    // 401 = password reset + NOT authenticated
-    //       (ACCOUNT_LOGIN_ON_PASSWORD_RESET = False, default)
-    //
-    // Therefore a 401 from this endpoint is NOT automatically
-    // a password-reset failure.
-    // ────────────────────────────────────────────────────────
+    /* ========================================================
+       VERIFY PASSWORD RESET CODE
+       ======================================================== */
+
+    verifyPasswordResetCode: key =>
+      apiFetch(
+        `${ALLAUTH}/auth/password/reset`,
+        {
+          method: 'GET',
+          skipSessionToken: true,
+          headers: {
+            'X-Password-Reset-Key':
+              String(key || '').trim()
+          }
+        }
+      ),
+
+
+    /* ========================================================
+       RESET PASSWORD
+       ======================================================== */
 
     async resetPasswordByCode({
       key,
       password
     }) {
+      key = String(key || '').trim();
+      password = String(password || '');
 
-      const cleanKey =
-        String(
-          key || ''
-        ).trim();
+      if (!key || !password) {
+        const field = key ? 'password' : 'key';
 
+        return {
+          ok: false,
+          status: 400,
+          passwordReset: false,
+          authenticated: false,
+          data: {
+            errors: [{
+              code: 'required',
+              param: field,
+              message:
+                `${field === 'key'
+                  ? 'Reset code'
+                  : 'Password'} is required.`
+            }]
+          }
+        };
+      }
 
-      const cleanPassword =
-        String(
-          password || ''
-        );
-
-
-      console.log(
-        '[AUTH] RESET PASSWORD REQUEST:',
+      const r = await apiFetch(
+        `${ALLAUTH}/auth/password/reset`,
         {
-          key:
-            cleanKey
+          method: 'POST',
+          skipSessionToken: true,
+          body: JSON.stringify({
+            key,
+            password
+          })
         }
       );
 
-
       if (
-        !cleanKey
+        r.status === 200 ||
+        r.status === 401
       ) {
-
-        return {
-
-          ok: false,
-
-          status: 400,
-
-          passwordReset: false,
-
-          authenticated: false,
-
-          data: {
-
-            errors: [
-
-              {
-
-                code:
-                  'required',
-
-                param:
-                  'key',
-
-                message:
-                  'Reset code is required.'
-
-              }
-
-            ]
-
-          }
-
-        };
-
-      }
-
-
-      if (
-        !cleanPassword
-      ) {
-
-        return {
-
-          ok: false,
-
-          status: 400,
-
-          passwordReset: false,
-
-          authenticated: false,
-
-          data: {
-
-            errors: [
-
-              {
-
-                code:
-                  'required',
-
-                param:
-                  'password',
-
-                message:
-                  'Password is required.'
-
-              }
-
-            ]
-
-          }
-
-        };
-
-      }
-
-
-      const res =
-        await apiFetch(
-          `${ALLAUTH}/auth/password/reset`,
-          {
-
-            method: 'POST',
-
-            // DO NOT set skipSessionToken here.
-            // The password_reset_by_code flow is stateful.
-            // allauth needs X-Session-Token (from the 401
-            // returned by /password/request) to find the
-            // pending flow. Skipping it causes a 409.
-
-            body:
-              JSON.stringify({
-
-                key:
-                  cleanKey,
-
-                password:
-                  cleanPassword
-
-              })
-
-          }
-        );
-
-
-      console.log(
-        '[AUTH] RESET PASSWORD RAW RESPONSE:',
-        res
-      );
-
-
-      /*
-       * ======================================================
-       * ALLAUTH PASSWORD RESET RESULT
-       * ======================================================
-       *
-       * According to the endpoint documentation supplied:
-       *
-       * 200:
-       *   Password changed and user authenticated.
-       *
-       * 401:
-       *   Password changed but user needs to log in.
-       *
-       * 400:
-       *   Input/reset-key/password error.
-       *
-       * Therefore:
-       *
-       * 200 OR 401 = successful password reset.
-       */
-
-      if (
-        res.status === 200 ||
-        res.status === 401
-      ) {
-
-        /*
-         * If tokens were supplied, store them.
-         */
-
-        Tokens.set(
-
-          res.data
-            ?.meta
-            ?.access_token,
-
-          res.data
-            ?.meta
-            ?.refresh_token
-
-        );
-
+        saveTokens(r.data);
 
         const authenticated =
           Tokens.isLoggedIn();
-
 
         sessionStorage.removeItem(
           'password_reset_email'
         );
 
-
         sessionStorage.removeItem(
           'password_reset_key'
         );
 
-
         return {
-
           ok: true,
-
-          status:
-            res.status,
-
-          passwordReset:
-            true,
-
-          authenticated:
-            authenticated,
-
-          data:
-            res.data
-
+          status: r.status,
+          passwordReset: true,
+          authenticated,
+          data: r.data
         };
-
       }
-
-
-      /*
-       * Actual reset failure.
-       */
 
       return {
-
         ok: false,
-
-        status:
-          res.status,
-
-        passwordReset:
-          false,
-
-        authenticated:
-          false,
-
-        data:
-          res.data
-
+        status: r.status,
+        passwordReset: false,
+        authenticated: false,
+        data: r.data
       };
-
     },
 
 
-    // ────────────────────────────────────────────────────────
-    // CHANGE PASSWORD
-    // ────────────────────────────────────────────────────────
+    /* ========================================================
+       CHANGE PASSWORD
+       ======================================================== */
 
-    async changePassword({
+    changePassword: ({
       current_password,
       new_password
-    }) {
-
-      return apiFetch(
-        `${ALLAUTH}/auth/password/change`,
+    }) =>
+      apiFetch(
+        `${ALLAUTH}/account/password/change`,
         {
-
           method: 'POST',
-
-          body:
-            JSON.stringify({
-
-              current_password,
-
-              new_password
-
-            })
-
+          body: JSON.stringify({
+            current_password,
+            new_password
+          })
         }
-      );
-
-    },
+      ),
 
 
-    // ────────────────────────────────────────────────────────
-    // REFRESH JWT
-    // ────────────────────────────────────────────────────────
+    /* ========================================================
+       REFRESH TOKEN
+       ======================================================== */
 
     async refreshToken() {
+      const refresh = Tokens.refresh;
 
-      const refresh =
-        Tokens.refresh;
-
-
-      if (
-        !refresh
-      ) {
-
+      if (!refresh) {
         return {
-
           ok: false,
-
           status: 401,
-
           data: {
-
             detail:
               'No refresh token available.'
-
           }
-
         };
-
       }
 
+      const response = await fetch(
+        `${ALLAUTH}/tokens/refresh`,
+        {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrf()
+          },
+          body: JSON.stringify({
+            refresh_token: refresh
+          })
+        }
+      );
 
-      const csrf =
-        getCsrfToken();
+      const data = await json(response);
 
+      if (response.ok) {
+        saveTokens(data);
+      } else if (response.status === 401) {
+        Tokens.clear();
+      }
 
-      const res =
-        await fetch(
-          `${ALLAUTH}/auth/token/refresh`,
-          {
-
-            method: 'POST',
-
-            credentials:
-              'include',
-
-            headers: {
-
-              'Content-Type':
-                'application/json',
-
-              'X-CSRFToken':
-                csrf
-
-            },
-
-            body:
-              JSON.stringify({
-
-                refresh
-
-              })
-
-          }
-        );
-
-
-      let data = null;
-
-
-      try {
-
-        data =
-          await res.json();
-
-      } catch (_) {}
-
-
-      const result = {
-
-        ok:
-          res.ok,
-
-        status:
-          res.status,
-
+      return {
+        ok: response.ok,
+        status: response.status,
         data
-
       };
-
-
-      if (
-        res.ok
-      ) {
-
-        Tokens.set(
-
-          data
-            ?.meta
-            ?.access_token,
-
-          data
-            ?.meta
-            ?.refresh_token
-
-        );
-
-      }
-
-
-      return result;
-
     },
 
+
+    /* ========================================================
+       GOOGLE LOGIN
+       ======================================================== */
+
     loginWithGoogle() {
+      return new Promise((resolve, reject) => {
 
-      return new Promise(
-        (resolve, reject) => {
+        const oauth =
+          window.google?.accounts?.oauth2;
 
-          const clientId =
-            window.__GOOGLE_CLIENT_ID__;
+        if (!oauth) {
+          reject(
+            new Error(
+              'Google Identity Services SDK is not loaded.'
+            )
+          );
+          return;
+        }
 
+        const clientId =
+          window.__GOOGLE_CLIENT_ID__;
 
-          if (!clientId) {
+        if (!clientId) {
+          reject(
+            new Error(
+              'Google client ID is not configured.'
+            )
+          );
+          return;
+        }
 
-            return reject(
-              new Error(
-                'Google Client ID is not configured.'
-              )
-            );
+        const client = oauth.initTokenClient({
+          client_id: clientId,
 
-          }
+          /*
+           * Google OAuth scopes.
+           */
+          scope: 'openid email profile',
 
+          /*
+           * Ask Google to let the user choose an account
+           * and request consent.
+           */
+          prompt: 'select_account consent',
 
-          // Check GIS library is loaded
-          if (
-            typeof google === 'undefined' ||
-            !google?.accounts?.id
-          ) {
+          callback: async token => {
 
-            return reject(
-              new Error(
-                'Google Sign-In library failed to load. Check your internet connection.'
-              )
-            );
+            if (token.error) {
+              resolve({
+                cancelled: true,
+                error: token.error
+              });
+              return;
+            }
 
-          }
-
-
-          // One-tap / popup credential callback
-          google.accounts.id.initialize({
-
-            client_id:
-              clientId,
-
-            callback:
-              async (response) => {
-
-                try {
-
-                  if (!response?.credential) {
-
-                    // User closed the popup without signing in
-                    return resolve({ cancelled: true });
-
-                  }
-
-
-                  console.log(
-                    '[AUTH] Google id_token received, sending to allauth'
-                  );
-
-
-                  const res =
-                    await apiFetch(
-                      `${ALLAUTH}/auth/provider/token`,
-                      {
-                        method: 'POST',
-
-                        // skipSessionToken: true so a stale
-                        // session token from another flow
-                        // doesn't accidentally get sent
-                        skipSessionToken: true,
-
-                        body: JSON.stringify({
-
-                          provider: 'google',
-
-                          process: 'login',
-
-                          token: {
-                            client_id:
-                              clientId,
-                            id_token:
-                              response.credential
-                          }
-
-                        })
-                      }
-                    );
-
-
-                  console.log(
-                    '[AUTH] provider/token response:',
-                    res
-                  );
-
-
-                  if (res.status === 200) {
-
-                    // Fully authenticated — store JWT tokens
-                    Tokens.set(
-                      res.data?.meta?.access_token,
-                      res.data?.meta?.refresh_token
-                    );
-
-                    return resolve({
-                      ok: true,
-                      data: res.data
-                    });
-
-                  }
-
-
-                  if (res.status === 401) {
-
-                    // Pending step — check which flow
-                    const flows =
-                      res.data?.data?.flows || [];
-
-                    const pendingSignup =
-                      flows.find(
-                        f =>
-                          f.id === 'provider_signup' &&
-                          f.is_pending
-                      );
-
-                    const pendingEmail =
-                      flows.find(
-                        f =>
-                          f.id === 'verify_email' &&
-                          f.is_pending
-                      );
-
-
-                    if (pendingSignup || pendingEmail) {
-
-                      // Store session token for the pending flow
-                      if (res.data?.meta?.session_token) {
-
-                        Tokens.setSession(
-                          res.data.meta.session_token
-                        );
-
-                      }
-
-                    }
-
-
-                    return resolve({
-                      ok: false,
-                      pending: true,
-                      pendingSignup: !!pendingSignup,
-                      pendingEmail: !!pendingEmail,
-                      data: res.data
-                    });
-
-                  }
-
-
-                  // 400, 403, or other error
-                  return resolve({
-                    ok: false,
-                    status: res.status,
-                    data: res.data
-                  });
-
-
-                } catch (err) {
-
-                  reject(err);
-
+            if (!token.access_token) {
+              resolve({
+                ok: false,
+                data: {
+                  detail:
+                    'Google did not return an access token.'
                 }
+              });
+              return;
+            }
 
-              },
+            try {
 
-            // Cancel the One Tap UI after 3 seconds if not interacted with
-            cancel_on_tap_outside: true,
+              /*
+               * IMPORTANT:
+               *
+               * This is the GOOGLE access token.
+               *
+               * It is sent ONLY to allauth.
+               *
+               * It is NOT saved into Tokens.access.
+               */
+              const r = await apiFetch(
+      `${ALLAUTH}/auth/provider/token`,
+      {
+     method: 'POST',
+     skipAuth: true,
+     skipSessionToken: true,
+     body: JSON.stringify({
+      provider: 'google',
+      process: 'login',
+      callback_url: window.location.origin + '/auth/callback',
+      token: {
+        client_id: clientId,              // <--- Must include this field
+        access_token: tokenResponse.access_token // or id_token
+      }
+      })
+    }
+);
 
-            use_fedcm_for_prompt: false
-
-          });
-
-
-          // Prompt the One Tap / Sign-In popup
-          google.accounts.id.prompt(
-            (notification) => {
-
-              if (
-                notification.isNotDisplayed() ||
-                notification.isSkippedMoment()
-              ) {
-
-                // One Tap was suppressed (user dismissed, browser blocked it, etc.)
-                // Fall back to the explicit sign-in button via renderButton
-                // so the user always has a path to sign in.
-                console.log(
-                  '[AUTH] One Tap suppressed:',
-                  notification.getNotDisplayedReason?.() ||
-                  notification.getSkippedReason?.()
-                );
+              console.log(
+                'Google → allauth:',
+                r.status,
+                r.data
+              );
 
 
-                // Resolve as cancelled — handleGoogleLogin will
-                // show the error from the button click path instead
-                resolve({ cancelled: true });
+              /* ------------------------------------------
+                 SUCCESS
+                 ------------------------------------------ */
 
+              if (r.ok) {
+                saveTokens(r.data);
+
+                resolve({
+                  ok: true,
+                  data: r.data
+                });
+
+                return;
               }
 
+
+              /* ------------------------------------------
+                 PROVIDER SIGNUP
+                 ------------------------------------------ */
+
+              const flows =
+                r.data?.data?.flows || [];
+
+              if (
+                flows.some(
+                  f =>
+                    f.id === 'provider_signup' &&
+                    f.is_pending
+                )
+              ) {
+                resolve({
+                  ok: false,
+                  pendingSignup: true,
+                  data: r.data
+                });
+
+                return;
+              }
+
+
+              /* ------------------------------------------
+                 EMAIL VERIFICATION
+                 ------------------------------------------ */
+
+              if (
+                flows.some(
+                  f =>
+                    f.id === 'verify_email' &&
+                    f.is_pending
+                )
+              ) {
+                saveTokens(r.data);
+
+                resolve({
+                  ok: false,
+                  pendingEmail: true,
+                  data: r.data
+                });
+
+                return;
+              }
+
+
+              /* ------------------------------------------
+                 OTHER ERROR
+                 ------------------------------------------ */
+
+              resolve({
+                ok: false,
+                status: r.status,
+                data: r.data
+              });
+
+            } catch (error) {
+
+              console.error(
+                'Google authentication error:',
+                error
+              );
+
+              resolve({
+                ok: false,
+                data: {
+                  detail: error.message
+                }
+              });
             }
-          );
+          }
+        });
 
-        }
-      );
-
+        client.requestAccessToken();
+      });
     }
-
   },
 
 
-  // ══════════════════════════════════════════════════════════
-  // PROFILE
-  // ══════════════════════════════════════════════════════════
+  /* ==========================================================
+     APPLICATION API
+     ========================================================== */
 
-  async getMe() {
+  getMe: () =>
+    apiFetch(`${API_ORIGIN}/api/me/`),
 
-    return apiFetch(
-      `${BASE}/api/me/`
-    );
+  getProfile: () =>
+    apiFetch(
+      `${API_ORIGIN}/api/me/profile/update/`
+    ),
 
-  },
-
-
-  async getProfile() {
-
-    return apiFetch(
-      `${BASE}/api/me/profile/update/`
-    );
-
-  },
-
-
-  async updateProfile(
-    formData
-  ) {
-
+  async updateProfile(formData) {
     const headers = {};
 
-
-    if (
-      Tokens.access
-    ) {
-
-      headers['Authorization'] =
+    if (Tokens.access) {
+      headers.Authorization =
         `Bearer ${Tokens.access}`;
-
     }
 
-
-    /*
-     * Do NOT set Content-Type.
-     *
-     * Browser sets multipart/form-data boundary.
-     */
-
-    const res =
-      await fetch(
-        `${BASE}/api/me/profile/update/`,
-        {
-
-          method: 'PATCH',
-
-          credentials:
-            'include',
-
-          headers,
-
-          body:
-            formData
-
-        }
-      );
-
-
-    let data = null;
-
-
-    try {
-
-      data =
-        await res.json();
-
-    } catch (_) {}
-
+    const response = await fetch(
+      `${API_ORIGIN}/api/me/profile/update/`,
+      {
+        method: 'PATCH',
+        credentials: 'include',
+        headers,
+        body: formData
+      }
+    );
 
     return {
-
-      ok:
-        res.ok,
-
-      status:
-        res.status,
-
-      data
-
+      ok: response.ok,
+      status: response.status,
+      data: await json(response)
     };
-
   }
-
 };
 
-// ════════════════════════════════════════════════════════════
-// GLOBAL EXPORTS
-// ════════════════════════════════════════════════════════════
 
-window.API =
-  API;
+/* ============================================================
+   GLOBAL
+   ============================================================ */
 
-
-window.Tokens =
-  Tokens;
+window.API = API;
+window.Tokens = Tokens;
