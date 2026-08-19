@@ -951,72 +951,135 @@ window.explorerCall = explorerCall;
      { ok: false, data }       → error from allauth
    ============================================================ */
 
-async function handleGoogleLogin(alertContainerId) {
+let googleLoginInProgress = false;
 
-  const buttons = document.querySelectorAll('.btn-google');
-  buttons.forEach(b => {
-    b.disabled = true;
-    b.classList.add('btn-loading');
-  });
+async function handleGoogleLogin() {
 
-  try {
-    const result = await API.auth.loginWithGoogle();
-
-    /* ── User closed the popup or clicked Cancel ── */
-    if (result?.cancelled) return;
-
-    /* ── Fully authenticated ── */
-    if (result?.ok) {
-      Toast.show('Signed in with Google! 🎉', 'success');
-      showApp();
-      return;
+    if (googleLoginInProgress) {
+        return;
     }
 
-    /* ── New Google user — allauth needs provider_signup completion ── */
-    if (result?.pendingSignup) {
-      Toast.show('Almost there! Please complete your sign-up.', 'info', 5000);
-      if (alertContainerId) {
-        showAlert(alertContainerId, 'Your Google account is new here. Please complete sign-up.');
-      }
-      return;
-    }
+    googleLoginInProgress = true;
 
-    /* ── Pending: email verification required ── */
-    if (result?.pendingEmail) {
-      Router.goAuth('verify-email');
-      Toast.show('Please verify your email to continue.', 'info', 5000);
-      return;
-    }
+    // Query both buttons so we can disable/restore all of them
+    const buttons = [
+        document.getElementById('btn-google-login'),
+        document.getElementById('btn-google-register'),
+    ].filter(Boolean);
 
-    /* ── Any other error from allauth ── */
-    const message = extractError(result?.data) || 'Google sign-in failed. Please try again.';
-    if (alertContainerId) {
-      showAlert(alertContainerId, message);
-    } else {
-      Toast.show(message, 'error');
-    }
+    // Save full innerHTML (preserves the SVG Google icon) and show a loading state
+    const LOADING_HTML = `<span style="display:inline-flex;align-items:center;gap:8px;">
+        <svg width="20" height="20" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+            <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+            <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+            <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
+            <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+        </svg>
+        Connecting…</span>`;
 
-  } catch (error) {
-    const message = error.message || 'Google sign-in failed.';
-    if (alertContainerId) {
-      showAlert(alertContainerId, message);
-    } else {
-      Toast.show(message, 'error');
-    }
-  } finally {
-    buttons.forEach(b => {
-      b.disabled = false;
-      b.classList.remove('btn-loading');
+    const originalHTMLs = new Map();
+    buttons.forEach(btn => {
+        originalHTMLs.set(btn, btn.innerHTML);
+        btn.disabled = true;
+        btn.innerHTML = LOADING_HTML;
     });
-  }
 
+    try {
+
+        const result = await API.auth.loginWithGoogle();
+
+        console.log('Google login result:', result);
+
+        if (result.ok) {
+
+            /*
+             * Show the app shell immediately so the UI transition feels instant,
+             * then explicitly await loadMe() before showing the success toast.
+             *
+             * WHY: showApp() calls loadMe() internally but does NOT await it —
+             * it fires and forgets. For Google login this causes a race condition:
+             * the dashboard renders before /api/me/ responds, leaving full_name
+             * and profile fields showing "—".
+             *
+             * By calling showApp() (which switches shells + navigates router) and
+             * then awaiting loadMe() ourselves, we guarantee renderUserInfo() has
+             * run with real data before the toast appears.
+             *
+             * showApp() internal loadMe() will also fire (unawaited) — that's fine.
+             * The second loadMe() here wins because it runs after the JWT is saved
+             * and it awaits the /api/me/ response before resolving.
+             */
+            const authShell = document.getElementById('auth-shell');
+            const appShell  = document.getElementById('app-shell');
+            if (authShell) authShell.style.display = 'none';
+            if (appShell)  appShell.style.display  = 'flex';
+            Router.go('dashboard');
+
+            // Await the /api/me/ fetch so full_name + profile are populated
+            // before renderUserInfo() runs and the toast shows.
+            await loadMe();
+
+            Toast.show(
+                'Successfully signed in with Google.',
+                'success'
+            );
+
+            return;
+        }
+
+        /*
+         * Google popup was cancelled or closed by the user.
+         * loginWithGoogle sets result.cancelled = true for these cases.
+         */
+        if (result.cancelled) {
+            Toast.show(
+                'Google sign-in was cancelled.',
+                'info'
+            );
+
+            return;
+        }
+
+        const message =
+            result.data?.detail ||
+            result.data?.errors?.[0]?.message ||
+            'Google sign-in failed.';
+
+        Toast.show(message, 'error');
+
+    } catch (error) {
+
+        console.error(error);
+
+        Toast.show(
+            error.message || 'Google sign-in failed.',
+            'error'
+        );
+
+    } finally {
+
+        googleLoginInProgress = false;
+
+        // Restore all buttons with their original HTML (icon + label intact)
+        buttons.forEach(btn => {
+            btn.disabled = false;
+            btn.innerHTML = originalHTMLs.get(btn) || btn.innerHTML;
+        });
+    }
 }
+document
+    .getElementById('btn-google-login')
+    ?.addEventListener(
+        'click',
+        handleGoogleLogin
+    );
 
-// Wire up all Google buttons once — no duplicate listeners.
-document.querySelectorAll('.btn-google').forEach(button => {
-  button.addEventListener('click', () => handleGoogleLogin(null));
-});
-
+document
+    .getElementById('btn-google-register')
+    ?.addEventListener(
+        'click',
+        handleGoogleLogin
+    );
 
 /* ============================================================
    MOBILE SIDEBAR

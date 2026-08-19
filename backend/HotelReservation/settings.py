@@ -1,3 +1,31 @@
+"""
+HotelReservation/settings.py
+─────────────────────────────────────────────────────────────────────────────
+Verified for django-allauth 65.19.1.
+
+KEY CHANGE FROM YOUR ORIGINAL:
+    django.contrib.sites  ← REMOVED from INSTALLED_APPS
+    SITE_ID              ← REMOVED
+
+WHY:
+    The Sites framework requires a SocialApp database row to find the
+    Google client_id / secret. You said you do NOT want credentials in
+    the database.
+
+    When you use SOCIALACCOUNT_PROVIDERS with the nested APP dict,
+    allauth reads credentials directly from settings — no SocialApp DB
+    row needed, no Sites framework needed.
+
+    The old code had BOTH (Sites framework AND APP dict) which caused
+    SocialApp.objects.get_current("google") to raise DoesNotExist
+    because the DB row was never created.
+
+    Our new view uses get_adapter().get_provider(request, "google",
+    client_id=...) which resolves the app from the APP dict in
+    SOCIALACCOUNT_PROVIDERS, not from the database.
+─────────────────────────────────────────────────────────────────────────────
+"""
+
 import os
 from pathlib import Path
 import environ
@@ -34,6 +62,9 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    # ↑ django.contrib.sites is intentionally ABSENT.
+    #   We use SOCIALACCOUNT_PROVIDERS APP dict (settings-based config),
+    #   which does NOT need the Sites framework or a DB SocialApp row.
 
     # Third-party apps
     'corsheaders',
@@ -47,6 +78,8 @@ INSTALLED_APPS = [
     # Local apps
     'profile.apps.AccountConfig',
 ]
+
+# NOTE: No SITE_ID — not needed without django.contrib.sites.
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
@@ -100,9 +133,9 @@ AUTH_PASSWORD_VALIDATORS = [
 # ==============================================================================
 
 CORS_ALLOWED_ORIGINS = [
-    'http://localhost',
-    'http://localhost:5500',
-    'http://localhost:8000',
+    'http://localhost',       # nginx frontend at port 80
+    'http://localhost:5500',  # VS Code Live Server (dev)
+    'http://localhost:8000',  # Django backend (admin/dev)
 ]
 
 CORS_ALLOW_CREDENTIALS = True
@@ -128,7 +161,7 @@ CSRF_TRUSTED_ORIGINS = [
 ]
 
 # ==============================================================================
-# DJANGO ALLAUTH CONFIGURATION (v65.19+ Headless App Strategy)
+# DJANGO ALLAUTH CONFIGURATION (65.19.x Headless App Strategy)
 # ==============================================================================
 
 ACCOUNT_LOGIN_METHODS = {"email"}
@@ -141,15 +174,15 @@ ACCOUNT_PREVENT_ENUMERATION = False
 # ── Signup & Email OTP ────────────────────────────────────────────────────────
 ACCOUNT_EMAIL_VERIFICATION_BY_CODE_ENABLED = True
 ACCOUNT_EMAIL_VERIFICATION_BY_CODE_MAX_ATTEMPTS = 5
-ACCOUNT_EMAIL_VERIFICATION_BY_CODE_TIMEOUT = 3600  # seconds
+ACCOUNT_EMAIL_VERIFICATION_BY_CODE_TIMEOUT = 3600
 ACCOUNT_EMAIL_VERIFICATION_SUPPORTS_RESEND = True
 ACCOUNT_LOGIN_ON_EMAIL_CONFIRMATION = True
 
 # ── Password Reset OTP ────────────────────────────────────────────────────────
 ACCOUNT_PASSWORD_RESET_BY_CODE_ENABLED = True
 ACCOUNT_PASSWORD_RESET_TOKEN_FLOW = "code"
-ACCOUNT_PASSWORD_RESET_BY_CODE_MAX_ATTEMPTS = 5   # lock out after 5 wrong guesses
-ACCOUNT_PASSWORD_RESET_BY_CODE_TIMEOUT = 900      # code expires after 15 minutes
+ACCOUNT_PASSWORD_RESET_BY_CODE_MAX_ATTEMPTS = 5
+ACCOUNT_PASSWORD_RESET_BY_CODE_TIMEOUT = 900
 ACCOUNT_LOGIN_ON_PASSWORD_RESET = True
 
 # ── Custom Adapters & Forms ───────────────────────────────────────────────────
@@ -176,24 +209,68 @@ HEADLESS_JWT_ACCESS_TOKEN_EXPIRES_IN = 3600
 HEADLESS_JWT_REFRESH_TOKEN_EXPIRES_IN = 86400 * 7
 HEADLESS_JWT_ROTATE_REFRESH_TOKEN = True
 
-# ── Social Account Providers ──────────────────────────────────────────────────
 # ==============================================================================
-# ── Social Account Providers ──────────────────────────────────────────────────
+# GOOGLE OAUTH SETTINGS
 # ==============================================================================
+
+# Expose client credentials as top-level Django settings so views.py
+# can access them via settings.GOOGLE_CLIENT_ID / settings.GOOGLE_CLIENT_SECRET
+# without re-importing environ in every file.
+#
+# These values come from .env — the client secret NEVER reaches the browser.
+GOOGLE_CLIENT_ID     = env('GOOGLE_CLIENT_ID')
+GOOGLE_CLIENT_SECRET = env('GOOGLE_CLIENT_SECRET')
+
+# ==============================================================================
+# SOCIAL ACCOUNT CONFIGURATION
+# ==============================================================================
+
+SOCIALACCOUNT_ADAPTER = "profile.adapter.CustomSocialAccountAdapter"
+
+# Google pre-verifies email addresses via their OIDC flow.
+# Setting this to "none" means Google users are logged in immediately
+# without a separate email OTP step.
+# Your email/password users still go through ACCOUNT_EMAIL_VERIFICATION = "mandatory".
+SOCIALACCOUNT_EMAIL_VERIFICATION = "none"
+
+# Require POST to finalise social login — prevents CSRF-style GET login.
+SOCIALACCOUNT_LOGIN_ON_GET = False
 
 SOCIALACCOUNT_PROVIDERS = {
     'google': {
+        # ── APP dict: credentials live HERE (in settings/env), NOT in DB ──────
+        #
+        # When this nested APP dict is present, allauth reads client_id and
+        # secret directly from settings. No SocialApp database row is needed.
+        # No django.contrib.sites is needed. No SITE_ID is needed.
+        #
+        # Our GoogleAuthCodeView calls:
+        #     get_adapter().get_provider(request, "google", client_id=...)
+        # which resolves the app from this dict, not from the database.
         'APP': {
             'client_id': env('GOOGLE_CLIENT_ID'),
-            'secret': env('GOOGLE_CLIENT_SECRET'),
-            'key': ''
+            'secret':    env('GOOGLE_CLIENT_SECRET'),
+            'key':       '',
         },
-        'scope': ['profile', 'email'],
-        'auth_params': {
-            'access_type': 'online',
-            'prompt': 'select_account consent',
+
+        # ── Scopes ────────────────────────────────────────────────────────────
+        # openid  → enables OIDC; gives us the "sub" claim (stable unique user ID)
+        # email   → gives us the user's email address
+        # profile → gives us name, picture
+        # We do NOT request calendar/drive/gmail — those need extra consent.
+        'SCOPE': ['openid', 'profile', 'email'],
+
+        'AUTH_PARAMS': {
+            'access_type': 'offline',
         },
-        'fetch_userinfo': True,
+
+        # Fetch additional user info from Google's userinfo endpoint.
+        # This fills in name/picture fields that may be missing from the ID token.
+        'FETCH_USERINFO': True,
+
+        # Trust Google's email_verified claim.
+        # When True, allauth skips its own email verification for Google users.
+        'EMAIL_AUTHENTICATION': True,
     }
 }
 
@@ -251,7 +328,7 @@ MEDIA_ROOT = BASE_DIR / 'media'
 
 if not DEBUG:
     SECURE_SSL_REDIRECT = True
-    SECURE_HSTS_SECONDS = 31536000  # 1 year
+    SECURE_HSTS_SECONDS = 31536000
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True
     SESSION_COOKIE_SECURE = True
