@@ -1,31 +1,3 @@
-"""
-HotelReservation/settings.py
-─────────────────────────────────────────────────────────────────────────────
-Verified for django-allauth 65.19.1.
-
-KEY CHANGE FROM YOUR ORIGINAL:
-    django.contrib.sites  ← REMOVED from INSTALLED_APPS
-    SITE_ID              ← REMOVED
-
-WHY:
-    The Sites framework requires a SocialApp database row to find the
-    Google client_id / secret. You said you do NOT want credentials in
-    the database.
-
-    When you use SOCIALACCOUNT_PROVIDERS with the nested APP dict,
-    allauth reads credentials directly from settings — no SocialApp DB
-    row needed, no Sites framework needed.
-
-    The old code had BOTH (Sites framework AND APP dict) which caused
-    SocialApp.objects.get_current("google") to raise DoesNotExist
-    because the DB row was never created.
-
-    Our new view uses get_adapter().get_provider(request, "google",
-    client_id=...) which resolves the app from the APP dict in
-    SOCIALACCOUNT_PROVIDERS, not from the database.
-─────────────────────────────────────────────────────────────────────────────
-"""
-
 import os
 from pathlib import Path
 import environ
@@ -62,11 +34,12 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    # ↑ django.contrib.sites is intentionally ABSENT.
-    #   We use SOCIALACCOUNT_PROVIDERS APP dict (settings-based config),
-    #   which does NOT need the Sites framework or a DB SocialApp row.
+    # django.contrib.sites is intentionally ABSENT.
+    # SOCIALACCOUNT_PROVIDERS uses the APP dict (settings-based config),
+    # so allauth reads credentials from .env — no SocialApp DB row,
+    # no Sites framework, no SITE_ID needed.
 
-    # Third-party apps
+    # Third-party
     'corsheaders',
     'rest_framework',
     'allauth',
@@ -75,11 +48,9 @@ INSTALLED_APPS = [
     'allauth.socialaccount',
     'allauth.socialaccount.providers.google',
 
-    # Local apps
+    # Local
     'profile.apps.AccountConfig',
 ]
-
-# NOTE: No SITE_ID — not needed without django.contrib.sites.
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
@@ -161,7 +132,7 @@ CSRF_TRUSTED_ORIGINS = [
 ]
 
 # ==============================================================================
-# DJANGO ALLAUTH CONFIGURATION (65.19.x Headless App Strategy)
+# DJANGO ALLAUTH — Headless (65.19.x)
 # ==============================================================================
 
 ACCOUNT_LOGIN_METHODS = {"email"}
@@ -190,19 +161,16 @@ ACCOUNT_ADAPTER = "profile.adapter.CustomAccountAdapter"
 ACCOUNT_SIGNUP_FORM_CLASS = "profile.forms.CustomSignupForm"
 ACCOUNT_SIGNUP_FIELDS = ["email*", "password1*"]
 
-# ── Headless Frontend URLs & Core Spec ────────────────────────────────────────
+# ── Headless Frontend URLs ────────────────────────────────────────────────────
 HEADLESS_FRONTEND_URLS = {
     "account_confirm_email": "http://localhost/account/verify-email/{key}",
     "account_reset_password_from_key": "http://localhost/account/password/reset/key/{key}",
 }
 HEADLESS_SERVE_SPECIFICATION = DEBUG
 
-# ── Headless Client & Token Strategy (JWT) ────────────────────────────────────
+# ── Headless JWT ──────────────────────────────────────────────────────────────
 HEADLESS_CLIENTS = ("app",)
-
-HEADLESS_TOKEN_STRATEGY = (
-    "allauth.headless.tokens.strategies.jwt.JWTTokenStrategy"
-)
+HEADLESS_TOKEN_STRATEGY = "allauth.headless.tokens.strategies.jwt.JWTTokenStrategy"
 
 HEADLESS_JWT_PRIVATE_KEY = env("ALLAUTH_JWT_PRIVATE_KEY").replace("\\n", "\n")
 HEADLESS_JWT_ACCESS_TOKEN_EXPIRES_IN = 3600
@@ -210,72 +178,65 @@ HEADLESS_JWT_REFRESH_TOKEN_EXPIRES_IN = 86400 * 7
 HEADLESS_JWT_ROTATE_REFRESH_TOKEN = True
 
 # ==============================================================================
-# GOOGLE OAUTH SETTINGS
+# SOCIAL ACCOUNT — Google OAuth
 # ==============================================================================
-
-# Expose client credentials as top-level Django settings so views.py
-# can access them via settings.GOOGLE_CLIENT_ID / settings.GOOGLE_CLIENT_SECRET
-# without re-importing environ in every file.
 #
-# These values come from .env — the client secret NEVER reaches the browser.
-GOOGLE_CLIENT_ID     = env('GOOGLE_CLIENT_ID')
-GOOGLE_CLIENT_SECRET = env('GOOGLE_CLIENT_SECRET')
-
-# ==============================================================================
-# SOCIAL ACCOUNT CONFIGURATION
+# IMPORTANT: credentials come from .env only — never from the database.
+#
+# The APP dict below tells allauth to read client_id / secret from settings
+# instead of looking up a SocialApp DB row. This means:
+#   • No django.contrib.sites needed
+#   • No SITE_ID needed
+#   • No admin panel entry for Google needed
+#   • Rotating credentials = update .env and restart, no DB migration
+#
+# The frontend sends the One Tap credential (id_token) or popup
+# access_token directly to allauth's built-in endpoint:
+#   POST /_allauth/app/v1/auth/provider/token
+# allauth resolves the Google app from this APP dict automatically.
 # ==============================================================================
 
 SOCIALACCOUNT_ADAPTER = "profile.adapter.CustomSocialAccountAdapter"
 
-# Google pre-verifies email addresses via their OIDC flow.
-# Setting this to "none" means Google users are logged in immediately
-# without a separate email OTP step.
-# Your email/password users still go through ACCOUNT_EMAIL_VERIFICATION = "mandatory".
+# Google pre-verifies emails via OIDC — skip allauth's email OTP for
+# social logins. Email/password users still go through "mandatory" above.
 SOCIALACCOUNT_EMAIL_VERIFICATION = "none"
 
-# Require POST to finalise social login — prevents CSRF-style GET login.
+# Require POST to complete social login (prevents CSRF-style GET logins).
 SOCIALACCOUNT_LOGIN_ON_GET = False
 
 SOCIALACCOUNT_PROVIDERS = {
     'google': {
-        # ── APP dict: credentials live HERE (in settings/env), NOT in DB ──────
-        #
-        # When this nested APP dict is present, allauth reads client_id and
-        # secret directly from settings. No SocialApp database row is needed.
-        # No django.contrib.sites is needed. No SITE_ID is needed.
-        #
-        # Our GoogleAuthCodeView calls:
-        #     get_adapter().get_provider(request, "google", client_id=...)
-        # which resolves the app from this dict, not from the database.
+        # Credentials read from .env via django-environ.
+        # No SocialApp DB row is created or consulted.
         'APP': {
             'client_id': env('GOOGLE_CLIENT_ID'),
             'secret':    env('GOOGLE_CLIENT_SECRET'),
             'key':       '',
         },
 
-        # ── Scopes ────────────────────────────────────────────────────────────
-        # openid  → enables OIDC; gives us the "sub" claim (stable unique user ID)
-        # email   → gives us the user's email address
-        # profile → gives us name, picture
-        # We do NOT request calendar/drive/gmail — those need extra consent.
+        # openid  → OIDC; provides the stable "sub" claim (unique user ID)
+        # email   → user's email address
+        # profile → name, picture
         'SCOPE': ['openid', 'profile', 'email'],
 
         'AUTH_PARAMS': {
-            'access_type': 'offline',
+            'access_type': 'online',
         },
 
-        # Fetch additional user info from Google's userinfo endpoint.
-        # This fills in name/picture fields that may be missing from the ID token.
+        # Fetch extra user info (name, picture) from Google's userinfo endpoint.
         'FETCH_USERINFO': True,
+        
+        'OAUTH_PKCE_ENABLED': True,
 
-        # Trust Google's email_verified claim.
-        # When True, allauth skips its own email verification for Google users.
-        'EMAIL_AUTHENTICATION': True,
+        # Trust Google's email_verified claim — skip allauth's own
+        # email verification step for Google sign-ins.
+        'EMAIL_AUTHENTICATION': False,
     }
 }
 
 # ==============================================================================
-# DJANGO REST FRAMEWORK (DRF)
+# DJANGO REST FRAMEWORK
 # ==============================================================================
 
 REST_FRAMEWORK = {

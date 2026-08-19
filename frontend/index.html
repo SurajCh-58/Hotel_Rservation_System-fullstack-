@@ -3,26 +3,30 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>HotelReservation – Frontend</title>
+  <title>HotelReservation</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="css/styles.css" />
-  <!-- Google Identity Services (required for Google Sign-In token flow) -->
-  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <!-- Google Identity Services (required for the token flow) -->
+  <!-- FIX: removed async/defer — GIS must be fully loaded before the user
+       can click "Sign in with Google". async/defer means window.google
+       may still be undefined when the first click fires, causing a silent
+       failure. Synchronous load guarantees the library is ready. -->
+  <script src="https://accounts.google.com/gsi/client"></script>
 </head>
 <body>
 
-<!-- ── Toast container ─────────────────────────────────── -->
+<!-- ── Toast container ─────────────────────────────────────── -->
 <div id="toast-container" class="toast-container"></div>
 
-<!-- ════════════════════════════════════════════════════════
-     AUTH SHELL (Unauthenticated)
-     ════════════════════════════════════════════════════════ -->
+<!-- ════════════════════════════════════════════════════════════
+     AUTH SHELL  (unauthenticated)
+     ════════════════════════════════════════════════════════════ -->
 <div id="auth-shell" class="auth-layout" style="display:none;">
   <div>
 
-    <!-- ── LOGIN ─────────────────────────────────────────── -->
-    <div id="auth-login" class="auth-card auth-view active">
+    <!-- ── LOGIN ──────────────────────────────────────────────── -->
+    <div id="auth-login" class="auth-card auth-view">
       <div class="auth-header">
         <div class="auth-logo">🏨</div>
         <h1 class="auth-title">Welcome back</h1>
@@ -31,12 +35,7 @@
 
       <div id="login-alert" class="alert alert-error"></div>
 
-      <!-- ── Google Sign-In button ── -->
-      <button
-    id="btn-google-login"
-    type="button"
-    class="btn btn-google btn-block btn-lg"
->
+      <button id="btn-google-login" type="button" class="btn btn-google btn-block btn-lg">
         <svg class="google-icon" viewBox="0 0 24 24" width="20" height="20" xmlns="http://www.w3.org/2000/svg">
           <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
           <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
@@ -80,7 +79,7 @@
       </p>
     </div>
 
-    <!-- ── REGISTER ───────────────────────────────────────── -->
+    <!-- ── REGISTER ────────────────────────────────────────────── -->
     <div id="auth-register" class="auth-card auth-view" style="display:none;">
       <div class="auth-header">
         <div class="auth-logo">🏨</div>
@@ -90,11 +89,7 @@
 
       <div id="reg-alert" class="alert alert-error"></div>
 
-      <!-- ── Google Sign-In button ── -->
-      <button
-    id="btn-google-register"
-    type="button"
-    class="btn btn-google btn-block btn-lg">
+      <button id="btn-google-register" type="button" class="btn btn-google btn-block btn-lg">
         <svg class="google-icon" viewBox="0 0 24 24" width="20" height="20" xmlns="http://www.w3.org/2000/svg">
           <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
           <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
@@ -145,7 +140,7 @@
       </p>
     </div>
 
-    <!-- ── VERIFY EMAIL ───────────────────────────────────── -->
+    <!-- ── VERIFY EMAIL ────────────────────────────────────────── -->
     <div id="auth-verify-email" class="auth-card auth-view" style="display:none;">
       <div class="auth-header">
         <div class="auth-logo">📧</div>
@@ -177,13 +172,12 @@
       </p>
 
       <p class="text-center mt-1">
-        <button class="link-btn" onclick="Router.goAuth('login')" style="color:var(--text-muted);font-weight:500;">
-          ← Back to login
-        </button>
+        <button class="link-btn" onclick="Router.goAuth('login')"
+          style="color:var(--text-muted);font-weight:500;">← Back to login</button>
       </p>
     </div>
 
-    <!-- ── FORGOT PASSWORD ────────────────────────────────── -->
+    <!-- ── FORGOT PASSWORD ─────────────────────────────────────── -->
     <div id="auth-forgot-password" class="auth-card auth-view" style="display:none;">
       <div class="auth-header">
         <div class="auth-logo">🔑</div>
@@ -205,13 +199,12 @@
       </form>
 
       <p class="text-center mt-2">
-        <button class="link-btn" onclick="Router.goAuth('login')" style="color:var(--text-muted);font-weight:500;">
-          ← Back to login
-        </button>
+        <button class="link-btn" onclick="Router.goAuth('login')"
+          style="color:var(--text-muted);font-weight:500;">← Back to login</button>
       </p>
     </div>
 
-    <!-- ── RESET PASSWORD (OTP + new password) ───────────── -->
+    <!-- ── RESET PASSWORD  (OTP + new password) ───────────────── -->
     <div id="auth-reset-password" class="auth-card auth-view" style="display:none;">
       <div class="auth-header">
         <div class="auth-logo">🔐</div>
@@ -224,7 +217,7 @@
 
       <div id="reset-alert" class="alert alert-error"></div>
 
-      <!-- PHASE 1: OTP entry -->
+      <!-- Phase 1: OTP entry -->
       <div id="reset-phase-otp">
         <div id="otp-reset" class="otp-container">
           <input class="otp-input" type="text" maxlength="1" inputmode="numeric" />
@@ -239,7 +232,7 @@
         </button>
       </div>
 
-      <!-- PHASE 2: New password (hidden until OTP verified) -->
+      <!-- Phase 2: New password (shown after OTP is verified) -->
       <div id="reset-phase-password" style="display:none;">
         <div class="form-group">
           <label class="form-label" for="reset-new-password">New Password</label>
@@ -267,15 +260,14 @@
 </div>
 <!-- end auth-shell -->
 
-<!-- ════════════════════════════════════════════════════════
-     APP SHELL (Authenticated)
-     ════════════════════════════════════════════════════════ -->
+<!-- ════════════════════════════════════════════════════════════
+     APP SHELL  (authenticated)
+     ════════════════════════════════════════════════════════════ -->
 <div id="app-shell" class="app-container" style="display:none;">
 
-  <!-- Sidebar overlay (mobile) -->
   <div id="sidebar-overlay" class="sidebar-overlay"></div>
 
-  <!-- ── SIDEBAR ─────────────────────────────────────────── -->
+  <!-- ── SIDEBAR ──────────────────────────────────────────────── -->
   <aside id="sidebar" class="sidebar">
     <div class="sidebar-logo">
       <div class="logo-title"><span>🏨</span> HotelReservation</div>
@@ -309,7 +301,7 @@
       <div class="user-info-mini">
         <div class="avatar-circle" id="mini-avatar">U</div>
         <div class="user-info-text">
-          <div class="user-name-mini" id="mini-name">Loading…</div>
+          <div class="user-name-mini"  id="mini-name">Loading…</div>
           <div class="user-email-mini" id="mini-email"></div>
         </div>
       </div>
@@ -319,14 +311,13 @@
     </div>
   </aside>
 
-  <!-- ── MAIN CONTENT ───────────────────────────────────── -->
+  <!-- ── MAIN CONTENT ─────────────────────────────────────────── -->
   <div class="main-content">
 
-    <!-- Topbar -->
     <header class="topbar">
       <div>
         <button id="hamburger" class="hamburger">☰</button>
-        <div class="topbar-title" id="topbar-title">Dashboard</div>
+        <div class="topbar-title"    id="topbar-title">Dashboard</div>
         <div class="topbar-subtitle" id="topbar-subtitle">Welcome back!</div>
       </div>
       <div class="topbar-actions">
@@ -336,16 +327,16 @@
       </div>
     </header>
 
-    <!-- ══════════════════════════════════════════════════
+    <!-- ════════════════════════════════════════════════════
          VIEW: Dashboard
-         ══════════════════════════════════════════════════ -->
+         ════════════════════════════════════════════════════ -->
     <div id="view-dashboard" class="view active">
       <div class="page-container">
 
         <div class="profile-hero">
           <div class="profile-avatar-large" id="dash-avatar">U</div>
           <div class="profile-hero-info">
-            <div class="profile-hero-name" id="dash-name">Loading…</div>
+            <div class="profile-hero-name"  id="dash-name">Loading…</div>
             <div class="profile-hero-email" id="dash-email"></div>
             <div class="profile-hero-badge">✅ Active Account</div>
           </div>
@@ -380,27 +371,28 @@
           <div style="display:flex;gap:0.75rem;flex-wrap:wrap;">
             <button class="btn btn-primary" onclick="Router.go('edit-profile')">✏️ Update Profile</button>
             <button class="btn btn-outline" onclick="Router.go('change-password')">🔒 Change Password</button>
-            <button class="btn btn-ghost" onclick="Router.go('endpoints')">🔌 API Explorer</button>
+            <button class="btn btn-ghost"   onclick="Router.go('endpoints')">🔌 API Explorer</button>
           </div>
         </div>
 
       </div>
     </div>
 
-    <!-- ══════════════════════════════════════════════════
+    <!-- ════════════════════════════════════════════════════
          VIEW: Profile (read-only)
-         ══════════════════════════════════════════════════ -->
+         ════════════════════════════════════════════════════ -->
     <div id="view-profile" class="view">
       <div class="page-container">
 
         <div class="profile-hero">
           <div class="profile-avatar-large" id="profile-avatar">U</div>
           <div class="profile-hero-info">
-            <div class="profile-hero-name" id="profile-name">Loading…</div>
+            <div class="profile-hero-name"  id="profile-name">Loading…</div>
             <div class="profile-hero-email" id="profile-email"></div>
             <div class="profile-hero-badge">✅ Verified Account</div>
           </div>
-          <button class="btn btn-outline btn-sm" style="color:white;border-color:rgba(255,255,255,0.6);background:rgba(255,255,255,0.15);"
+          <button class="btn btn-outline btn-sm"
+            style="color:white;border-color:rgba(255,255,255,0.6);background:rgba(255,255,255,0.15);"
             onclick="Router.go('edit-profile')">Edit ✏️</button>
         </div>
 
@@ -431,9 +423,9 @@
       </div>
     </div>
 
-    <!-- ══════════════════════════════════════════════════
+    <!-- ════════════════════════════════════════════════════
          VIEW: Edit Profile
-         ══════════════════════════════════════════════════ -->
+         ════════════════════════════════════════════════════ -->
     <div id="view-edit-profile" class="view">
       <div class="page-container">
 
@@ -448,7 +440,6 @@
           <div id="edit-profile-alert" class="alert alert-error"></div>
 
           <form id="form-edit-profile">
-            <!-- Avatar upload -->
             <label for="edit-image" style="cursor:pointer;">
               <div class="avatar-upload-area">
                 <div class="avatar-preview" id="edit-avatar-preview">U</div>
@@ -477,9 +468,9 @@
       </div>
     </div>
 
-    <!-- ══════════════════════════════════════════════════
+    <!-- ════════════════════════════════════════════════════
          VIEW: Change Password
-         ══════════════════════════════════════════════════ -->
+         ════════════════════════════════════════════════════ -->
     <div id="view-change-password" class="view">
       <div class="page-container">
 
@@ -528,9 +519,9 @@
       </div>
     </div>
 
-    <!-- ══════════════════════════════════════════════════
+    <!-- ════════════════════════════════════════════════════
          VIEW: API Explorer
-         ══════════════════════════════════════════════════ -->
+         ════════════════════════════════════════════════════ -->
     <div id="view-endpoints" class="view">
       <div class="page-container">
 
@@ -542,10 +533,8 @@
             </div>
           </div>
 
-          <!-- ── Auth Endpoints ─────────────────────── -->
           <p style="font-size:0.75rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:0.5rem;">Auth Endpoints</p>
 
-          <!-- 1. Signup -->
           <div class="endpoint-card">
             <div class="endpoint-header">
               <span class="method-badge method-post">POST</span>
@@ -556,13 +545,10 @@
             <div class="endpoint-body">
               <p style="font-size:0.8rem;color:var(--text-secondary);margin-bottom:0.5rem;">Request body (JSON):</p>
               <div class="code-block">{ "email": "user@example.com", "password": "secure123", "full_name": "John Doe" }</div>
-              <p style="font-size:0.8rem;color:var(--text-secondary);margin:0.75rem 0 0.25rem;">Success 200 response:</p>
-              <div class="code-block">{ "status": 200, "data": { "access": "eyJ...", "refresh": "eyJ..." } }</div>
-              <p style="font-size:0.75rem;color:var(--text-muted);margin-top:0.5rem;">→ Then use <b>POST /auth/email/verify</b> with the 6-digit OTP code sent to email.</p>
+              <p style="font-size:0.75rem;color:var(--text-muted);margin-top:0.5rem;">→ Follow up with <b>POST /auth/email/verify</b> using the 6-digit OTP sent to email.</p>
             </div>
           </div>
 
-          <!-- 2. Login -->
           <div class="endpoint-card">
             <div class="endpoint-header">
               <span class="method-badge method-post">POST</span>
@@ -572,12 +558,9 @@
             </div>
             <div class="endpoint-body">
               <div class="code-block">{ "email": "user@example.com", "password": "secure123" }</div>
-              <p style="font-size:0.8rem;color:var(--text-secondary);margin:0.75rem 0 0.25rem;">Response:</p>
-              <div class="code-block">{ "status": 200, "data": { "access": "eyJ...", "refresh": "eyJ...", "user": { "email": "...", "full_name": "..." } } }</div>
             </div>
           </div>
 
-          <!-- 3. Logout -->
           <div class="endpoint-card">
             <div class="endpoint-header">
               <span class="method-badge method-delete">DELETE</span>
@@ -587,31 +570,26 @@
             </div>
             <div class="endpoint-body">
               <p style="font-size:0.8rem;color:var(--text-secondary);">Requires: Authorization Bearer token. No body needed.</p>
-              <div class="code-block">DELETE /_allauth/app/v1/auth/logout
-Authorization: Bearer &lt;access_token&gt;</div>
             </div>
           </div>
 
-          <!-- 4. Verify Email -->
           <div class="endpoint-card">
             <div class="endpoint-header">
               <span class="method-badge method-post">POST</span>
               <span class="endpoint-path">/_allauth/app/v1/auth/email/verify</span>
-              <span class="endpoint-desc">Verify email with 6-digit OTP code</span>
+              <span class="endpoint-desc">Verify email with 6-digit OTP</span>
               <span class="ep-arrow">▼</span>
             </div>
             <div class="endpoint-body">
               <div class="code-block">{ "key": "123456" }</div>
-              <p style="font-size:0.75rem;color:var(--text-muted);margin-top:0.5rem;">Also supports PUT with empty body to resend the verification email.</p>
             </div>
           </div>
 
-          <!-- 5. Request Password Reset -->
           <div class="endpoint-card">
             <div class="endpoint-header">
               <span class="method-badge method-post">POST</span>
-              <span class="endpoint-path">/_allauth/app/v1/auth/password/reset</span>
-              <span class="endpoint-desc">Request password reset (sends OTP to email)</span>
+              <span class="endpoint-path">/_allauth/app/v1/auth/password/request</span>
+              <span class="endpoint-desc">Request password reset (sends OTP)</span>
               <span class="ep-arrow">▼</span>
             </div>
             <div class="endpoint-body">
@@ -619,20 +597,31 @@ Authorization: Bearer &lt;access_token&gt;</div>
             </div>
           </div>
 
-          <!-- 6. Reset Password by Code -->
           <div class="endpoint-card">
             <div class="endpoint-header">
-              <span class="method-badge method-post">POST</span>
-              <span class="endpoint-path">/_allauth/app/v1/auth/password/reset/by_code</span>
-              <span class="endpoint-desc">Set new password using OTP code</span>
+              <span class="method-badge method-get">GET</span>
+              <span class="endpoint-path">/_allauth/app/v1/auth/password/reset</span>
+              <span class="endpoint-desc">Validate OTP via X-Password-Reset-Key header</span>
               <span class="ep-arrow">▼</span>
             </div>
             <div class="endpoint-body">
-              <div class="code-block">{ "email": "user@example.com", "code": "123456", "password": "newSecret99" }</div>
+              <div class="code-block">GET /_allauth/app/v1/auth/password/reset
+X-Password-Reset-Key: 123456</div>
             </div>
           </div>
 
-          <!-- 7. Change Password -->
+          <div class="endpoint-card">
+            <div class="endpoint-header">
+              <span class="method-badge method-post">POST</span>
+              <span class="endpoint-path">/_allauth/app/v1/auth/password/reset</span>
+              <span class="endpoint-desc">Set new password using verified OTP</span>
+              <span class="ep-arrow">▼</span>
+            </div>
+            <div class="endpoint-body">
+              <div class="code-block">{ "key": "123456", "password": "newSecret99" }</div>
+            </div>
+          </div>
+
           <div class="endpoint-card">
             <div class="endpoint-header">
               <span class="method-badge method-post">POST</span>
@@ -646,7 +635,6 @@ Authorization: Bearer &lt;access_token&gt;</div>
             </div>
           </div>
 
-          <!-- 8. Refresh Token -->
           <div class="endpoint-card">
             <div class="endpoint-header">
               <span class="method-badge method-post">POST</span>
@@ -655,16 +643,14 @@ Authorization: Bearer &lt;access_token&gt;</div>
               <span class="ep-arrow">▼</span>
             </div>
             <div class="endpoint-body">
-              <div class="code-block">{ "refresh": "eyJ..." }</div>
+              <div class="code-block">{ "refresh": "eyJ…" }</div>
               <button class="btn btn-outline btn-sm" style="margin-top:0.75rem;" onclick="explorerCall('refresh')">▶ Try it</button>
               <div id="result-refresh" class="response-area" style="display:none;margin-top:0.5rem;"></div>
             </div>
           </div>
 
-          <!-- ── Profile Endpoints ─────────────────── -->
           <p style="font-size:0.75rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;margin:1rem 0 0.5rem;">Profile Endpoints</p>
 
-          <!-- 9. Get Me -->
           <div class="endpoint-card">
             <div class="endpoint-header">
               <span class="method-badge method-get">GET</span>
@@ -674,16 +660,11 @@ Authorization: Bearer &lt;access_token&gt;</div>
             </div>
             <div class="endpoint-body">
               <p style="font-size:0.8rem;color:var(--text-secondary);margin-bottom:0.35rem;">Requires: Bearer token</p>
-              <div class="code-block">GET /api/me/
-Authorization: Bearer &lt;access_token&gt;</div>
-              <p style="font-size:0.8rem;color:var(--text-secondary);margin:0.75rem 0 0.25rem;">Response (UserSerializer):</p>
-              <div class="code-block">{ "id": 1, "full_name": "John Doe", "email": "john@example.com", "profiles": { "image": "/media/profile/pic.jpg", "phone": "+977..." } }</div>
               <button class="btn btn-outline btn-sm" style="margin-top:0.75rem;" onclick="explorerCall('get-me')">▶ Try it</button>
               <div id="result-get-me" class="response-area" style="margin-top:0.5rem;"></div>
             </div>
           </div>
 
-          <!-- 10. Update Profile -->
           <div class="endpoint-card">
             <div class="endpoint-header">
               <span class="method-badge method-patch">PATCH</span>
@@ -698,10 +679,7 @@ Authorization: Bearer &lt;access_token&gt;
 
 FormData:
   phone: "+977 9800000000"
-  image: [file upload, optional]</div>
-              <p style="font-size:0.8rem;color:var(--text-secondary);margin:0.75rem 0 0.25rem;">Response (ProfileSerializer):</p>
-              <div class="code-block">{ "image": "/media/profile/new.jpg", "phone": "+977 9800000000" }</div>
-              <p style="font-size:0.75rem;color:var(--text-muted);margin-top:0.4rem;">Also supports GET (retrieve) and PUT (full update).</p>
+  image: [file, optional]</div>
               <button class="btn btn-outline btn-sm" style="margin-top:0.75rem;" onclick="explorerCall('get-profile')">▶ GET Profile</button>
               <div id="result-get-profile" class="response-area" style="margin-top:0.5rem;"></div>
             </div>
@@ -716,8 +694,10 @@ FormData:
           </div>
           <div>
             <p style="font-size:0.78rem;color:var(--text-muted);margin-bottom:0.5rem;">Access Token (JWT):</p>
-            <div class="code-block" id="token-display" style="word-break:break-all;font-size:0.72rem;max-height:80px;overflow:auto;">—</div>
-            <button class="btn btn-outline btn-sm" style="margin-top:0.75rem;" onclick="document.getElementById('token-display').textContent = Tokens.access || '(none)'">
+            <div class="code-block" id="token-display"
+              style="word-break:break-all;font-size:0.72rem;max-height:80px;overflow:auto;">—</div>
+            <button class="btn btn-outline btn-sm" style="margin-top:0.75rem;"
+              onclick="document.getElementById('token-display').textContent = Tokens.access || '(none)'">
               Show Token
             </button>
           </div>
@@ -730,38 +710,30 @@ FormData:
   </div><!-- end main-content -->
 </div><!-- end app-shell -->
 
-<!-- Inject backend config for frontend use (client ID is public-safe) -->
+<!-- Public-safe: client_id is not a secret -->
 <script>
   window.__GOOGLE_CLIENT_ID__ = '783306575389-e9c48viohr7o8aafl81vml9usd74fjsl.apps.googleusercontent.com';
 </script>
-<script src="js/api.js?v=2"></script>
-<script src="js/app.js?v=2"></script>
 
-<!-- After DOM is set up, wire up auth-view switching -->
-<script>
-  // Override goAuth to properly show/hide auth views
-  Router.goAuth = function(viewId) {
-    document.querySelectorAll('.auth-view').forEach(v => {
-      v.style.display = 'none';
-    });
-    const el = document.getElementById(`auth-${viewId}`);
-    if (el) el.style.display = 'block';
-  };
+<script src="js/api.js"></script>
+<script src="js/app.js"></script>
 
-  // Also sync dash-name-2 and dash-email-2 when user loads
-  const _origRender = window.renderUserInfo;
-  window.renderUserInfo = function(user) {
-    _origRender(user);
-    const n2 = document.getElementById('dash-name-2');
-    const e2 = document.getElementById('dash-email-2');
-    const pn2 = document.getElementById('profile-name2');
-    const pe2 = document.getElementById('profile-email2');
-    if (n2) n2.textContent = user.full_name || '—';
-    if (e2) e2.textContent = user.email || '—';
-    if (pn2) pn2.textContent = user.full_name || '—';
-    if (pe2) pe2.textContent = user.email || '—';
-  };
-</script>
+<!--
+  FIX: moved g-btn-container to after the scripts.
+  It must exist in the DOM when loginWithGoogleButton() runs, but
+  it does not need to exist before DOMContentLoaded — placing it
+  here keeps it out of the tab order and screen reader flow.
+
+  Hidden container for google.accounts.id.renderButton().
+  renderButton writes Google's own button element here; we then
+  programmatically click it to open the GIS credential popup
+  without FedCM — works even when FedCM is disabled by the user.
+  position:fixed keeps it out of the layout flow entirely so it
+  can never accidentally affect scrollHeight or page dimensions.
+-->
+<div id="g-btn-container"
+  style="position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none;"
+  aria-hidden="true"></div>
 
 </body>
 </html>

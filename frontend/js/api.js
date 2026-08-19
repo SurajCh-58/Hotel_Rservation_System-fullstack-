@@ -1,28 +1,56 @@
-const API_ORIGIN = window.__API_ORIGIN__ || 'http://localhost:8000';
-const ALLAUTH = `${API_ORIGIN}/_allauth/app/v1`;
+/* ============================================================
+   api.js  —  HotelReservation API client
+   ============================================================
+
+   TOKEN STRATEGY
+   ──────────────
+   access_token   → short-lived JWT; sent as Authorization: Bearer
+                    on every /api/* request.
+   refresh_token  → long-lived JWT; exchanged for a new access_token
+                    on 401. Cleared on logout so the Google picker is
+                    always shown after sign-out (prevents auto-login to
+                    the wrong account via silent token refresh).
+
+   GOOGLE SIGN-IN  (button-click only — no auto-prompt)
+   ─────────────────────────────────────────────────────
+   1. User clicks "Sign in with Google".
+   2. Show Google account picker via renderButton() + programmatic click.
+      • renderButton() bypasses FedCM → works even when FedCM is
+        disabled in Chrome site settings.
+      • auto_select: true → if only one Google account is in the
+        browser, the picker resolves silently (user already chose it).
+   3. The GIS callback delivers an OIDC id_token (eyJ…).
+   4. POST /_allauth/app/v1/auth/provider/token validates it server-side.
+
+   LOGOUT
+   ──────
+   Clears ALL tokens (access + refresh + session) via Tokens.clear().
+   The server-side JWT expires naturally. After logout the Google button
+   always goes through Step 2 (the picker) — auto_select: true gives
+   returning single-account users a one-tap experience via GIS.
+   ============================================================ */
+
 
 /* ============================================================
    TOKEN STORAGE
    ============================================================ */
 
 const Tokens = {
-  get access() {
-    return localStorage.getItem('access_token');
-  },
 
-  get refresh() {
-    return localStorage.getItem('refresh_token');
-  },
+  get access()  { return localStorage.getItem('access_token'); },
+  get refresh() { return localStorage.getItem('refresh_token'); },
 
   get sessionToken() {
     return sessionStorage.getItem('allauth_session_token');
   },
 
+  /** Persist access + refresh tokens (either may be absent). */
   set(access, refresh) {
-    if (access) localStorage.setItem('access_token', access);
+    if (access)  localStorage.setItem('access_token',  access);
     if (refresh) localStorage.setItem('refresh_token', refresh);
   },
 
+  /** Persist (or clear) the allauth headless session token. */
   session(token) {
     if (token) {
       sessionStorage.setItem('allauth_session_token', token);
@@ -31,42 +59,32 @@ const Tokens = {
     }
   },
 
-  // Full wipe — used when the refresh token itself is invalid/expired
-  // (a failed silent-refresh attempt), NOT for a normal user sign-out.
+  /**
+   * HARD wipe — used when the refresh token itself is invalid/expired.
+   * Forces the user back to the full Google picker on next sign-in.
+   */
   clear() {
     localStorage.removeItem('access_token');
     localStorage.removeItem('refresh_token');
-
     sessionStorage.removeItem('allauth_session_token');
     sessionStorage.removeItem('password_reset_email');
     sessionStorage.removeItem('password_reset_key');
   },
 
-  // Sign-out — ends the LOCAL session only. Deliberately keeps
-  // refresh_token in localStorage so the next "Sign in with Google"
-  // can silently re-authenticate without reopening the Google popup
-  // (which is what was forcing the picker + consent screen on every
-  // single re-login). The refresh token still requires a live,
-  // non-revoked Google grant to redeem — it does not bypass Google's
-  // own security, it just avoids re-asking when nothing has changed.
+  /**
+   * SOFT logout — drops the access token (UI treats user as signed out)
+   * but deliberately keeps the refresh token so the next explicit
+   * "Sign in with Google" click can silently re-authenticate without
+   * reopening the Google picker/consent screen.
+   */
   clearSession() {
     localStorage.removeItem('access_token');
-
     sessionStorage.removeItem('allauth_session_token');
     sessionStorage.removeItem('password_reset_email');
     sessionStorage.removeItem('password_reset_key');
   },
 
-
-  /* app.js uses this name */
-  isLoggedIn() {
-    return !!this.access;
-  },
-
-  /* Keep compatibility if any code uses the old name */
-  loggedIn() {
-    return this.isLoggedIn();
-  }
+  isLoggedIn() { return !!this.access; },
 };
 
 
@@ -74,115 +92,75 @@ const Tokens = {
    HELPERS
    ============================================================ */
 
+/** Read the CSRF token from the csrftoken cookie. */
 const csrf = () =>
   document.cookie
     .split('; ')
     .find(x => x.startsWith('csrftoken='))
     ?.split('=')[1] || '';
 
-const json = async response => {
-  try {
-    return await response.json();
-  } catch {
-    return null;
-  }
+/** Safely parse a JSON response; returns null on parse failure. */
+const parseJSON = async response => {
+  try   { return await response.json(); }
+  catch { return null; }
+};
+
+/** Extract and persist tokens from any allauth response payload. */
+const saveTokens = payload => {
+  const meta = payload?.meta || {};
+  const data = payload?.data || {};
+
+  const access  = meta.access_token  ?? data.access_token  ?? payload?.access_token;
+  const refresh = meta.refresh_token ?? data.refresh_token ?? payload?.refresh_token;
+  const session = meta.session_token ?? data.session_token ?? payload?.session_token;
+
+  if (access || refresh) Tokens.set(access, refresh);
+  if (session !== undefined) Tokens.session(session);
 };
 
 
 /* ============================================================
-   SAVE ALLAUTH TOKENS
+   CORE FETCH WRAPPER
    ============================================================ */
 
-const saveTokens = response => {
-  const meta = response?.meta || {};
-  const data = response?.data || {};
-
-  const access =
-    meta.access_token ??
-    data.access_token ??
-    response?.access_token;
-
-  const refresh =
-    meta.refresh_token ??
-    data.refresh_token ??
-    response?.refresh_token;
-
-  const session =
-    meta.session_token ??
-    data.session_token ??
-    response?.session_token;
-
-  if (access || refresh) {
-    Tokens.set(access, refresh);
-  }
-
-  if (session !== undefined) {
-    Tokens.session(session);
-  }
-};
-
-
-/* ============================================================
-   API FETCH
-   ============================================================ */
-
+/**
+ * apiFetch — adds auth headers and handles a single 401 retry.
+ *
+ * opts.skipAuth         — omit Authorization header entirely
+ * opts.skipSessionToken — omit X-Session-Token header
+ *
+ * Routing rules:
+ *   • Authorization: Bearer  → only on /api/* (never on /_allauth/*)
+ *   • X-Session-Token        → only on /_allauth/* (when available)
+ */
 async function apiFetch(url, opts = {}) {
-  const {
-    skipSessionToken = false,
-    skipAuth = false,
-    ...options
-  } = opts;
+  const { skipSessionToken = false, skipAuth = false, ...options } = opts;
 
   const isAllauth = url.includes('/_allauth/');
 
   const headers = {
     'Content-Type': 'application/json',
-    'X-CSRFToken': csrf(),
-    ...(options.headers || {})
+    'X-CSRFToken':  csrf(),
+    ...(options.headers || {}),
   };
 
-  /*
-   * Application JWT is sent only to application APIs.
-   *
-   * NEVER send the Google OAuth token here.
-   */
-  if (
-    !skipAuth &&
-    Tokens.access &&
-    !isAllauth
-  ) {
+  if (!skipAuth && Tokens.access && !isAllauth) {
     headers.Authorization = `Bearer ${Tokens.access}`;
   }
 
-  /*
-   * Allauth session token is sent only to allauth.
-   */
-  if (
-    isAllauth &&
-    Tokens.sessionToken &&
-    !skipSessionToken
-  ) {
+  if (isAllauth && Tokens.sessionToken && !skipSessionToken) {
     headers['X-Session-Token'] = Tokens.sessionToken;
   }
 
-  let response = await fetch(url, {
-    credentials: 'include',
-    ...options,
-    headers
-  });
+  let response = await fetch(url, { credentials: 'include', ...options, headers });
+  let data     = await parseJSON(response);
 
-  let data = await json(response);
-
-  /*
-   * allauth may return a session token.
-   */
+  // Persist any session token returned by allauth.
   if (data?.meta?.session_token !== undefined) {
     Tokens.session(data.meta.session_token);
   }
 
-  /*
-   * Refresh application JWT after a 401.
-   */
+  // Single 401 retry using the refresh token (application APIs only).
   if (
     response.status === 401 &&
     Tokens.refresh &&
@@ -193,24 +171,13 @@ async function apiFetch(url, opts = {}) {
     const refreshed = await API.auth.refreshToken();
 
     if (refreshed.ok && Tokens.access) {
-      headers.Authorization =
-        `Bearer ${Tokens.access}`;
-
-      response = await fetch(url, {
-        credentials: 'include',
-        ...options,
-        headers
-      });
-
-      data = await json(response);
+      headers.Authorization = `Bearer ${Tokens.access}`;
+      response = await fetch(url, { credentials: 'include', ...options, headers });
+      data     = await parseJSON(response);
     }
   }
 
-  return {
-    ok: response.ok,
-    status: response.status,
-    data
-  };
+  return { ok: response.ok, status: response.status, data };
 }
 
 
@@ -220,717 +187,458 @@ async function apiFetch(url, opts = {}) {
 
 const API = {
 
+  /* ----------------------------------------------------------
+     AUTH
+     ---------------------------------------------------------- */
   auth: {
 
-    /* ========================================================
-       SIGNUP
-       ======================================================== */
-
-    signup: ({
-      email,
-      password,
-      full_name
-    }) =>
+    /** Register a new user. Returns 200 or a pending verify_email flow. */
+    signup: ({ email, password, full_name }) =>
       apiFetch(`${ALLAUTH}/auth/signup`, {
         method: 'POST',
         skipSessionToken: true,
-        body: JSON.stringify({
-          email,
-          password,
-          full_name
-        })
+        body: JSON.stringify({ email, password, full_name }),
       }),
 
 
-    /* ========================================================
-       LOGIN
-       ======================================================== */
-
+    /** Email + password login. Saves tokens on success. */
     async login({ email, password }) {
-      const r = await apiFetch(
-        `${ALLAUTH}/auth/login`,
-        {
-          method: 'POST',
-          skipSessionToken: true,
-          body: JSON.stringify({
-            email,
-            password
-          })
-        }
-      );
-
-      if (r.ok) {
-        saveTokens(r.data);
-      }
-
+      const r = await apiFetch(`${ALLAUTH}/auth/login`, {
+        method: 'POST',
+        skipSessionToken: true,
+        body: JSON.stringify({ email, password }),
+      });
+      if (r.ok) saveTokens(r.data);
       return r;
     },
 
 
-    /* ========================================================
-       EMAIL VERIFICATION
-       ======================================================== */
-
+    /** Verify email address with a 6-digit OTP. */
     async verifyEmail(key) {
-      const r = await apiFetch(
-        `${ALLAUTH}/auth/email/verify`,
-        {
-          method: 'POST',
-          skipSessionToken: true,
-          body: JSON.stringify({ key })
-        }
-      );
-
+      const r = await apiFetch(`${ALLAUTH}/auth/email/verify`, {
+        method: 'POST',
+        // DO NOT skipSessionToken — allauth requires X-Session-Token for the
+        // stateful email-verification-by-code flow (OpenAPI spec: SessionToken param).
+        // The session token was saved automatically when signup/login returned a
+        // 401 with `meta.session_token`; without it allauth returns 409 (no flow pending).
+        body: JSON.stringify({ key }),
+      });
       if (r.ok) {
         saveTokens(r.data);
-        Tokens.session();
+        Tokens.session(null);
       }
-
       return r;
     },
 
 
-    /* ========================================================
-       RESEND EMAIL VERIFICATION
-       ======================================================== */
-
+    /** Re-send the email verification OTP. */
     resendVerification: () =>
-      apiFetch(
-        `${ALLAUTH}/auth/email/verify/resend`,
-        {
-          method: 'POST'
-        }
-      ),
+      apiFetch(`${ALLAUTH}/auth/email/verify/resend`, { method: 'POST' }),
 
 
-    /* ========================================================
-       LOGOUT
-
-       IMPORTANT: does NOT call DELETE /_allauth/app/v1/auth/session.
-
-       That endpoint runs Django's adapter.logout(request), which
-       flushes the server-side session — rotating the session key and
-       wiping all session data, including headless_refresh_tokens.
-       Once that happens, EVERY refresh token tied to this session is
-       permanently unredeemable, regardless of rotation state or what
-       we do with localStorage. That was the actual root cause of the
-       "consent screen every single sign-in" bug: clearSession() tried
-       to preserve refresh_token across sign-out, but the session
-       backing it was already destroyed by this same call, so the
-       preserved token was dead on arrival every time.
-
-       Fix: sign-out is now purely local ("soft logout"). We drop the
-       access token so the UI treats the user as signed out and any
-       authenticated API call correctly gets a 401, but we deliberately
-       do NOT touch the server-side session or the refresh token. That
-       keeps the refresh token — and the session it depends on — alive
-       for loginWithGoogle()'s silent-refresh attempt next time, which
-       is what actually skips the picker/consent screen.
-
-       Trade-off: the refresh token is not server-side revoked at
-       sign-out; it remains valid until it naturally expires
-       (HEADLESS_JWT_REFRESH_TOKEN_EXPIRES_IN) or is silently rotated
-       past. If you need a "sign out this device everywhere, right
-       now" guarantee (e.g. shared/public computers, security-critical
-       apps), call the session DELETE endpoint instead and accept that
-       every sign-in will show the popup — that is the correct
-       trade-off for that use case, not a bug to work around.
-       ======================================================== */
-
+    /**
+     * Logout — clears ALL local tokens (access + refresh + session).
+     *
+     * We use Tokens.clear() (not the old soft Tokens.clearSession()).
+     * The soft version kept the refresh_token so loginWithGoogleButton()
+     * could silently re-auth via refreshToken() on the next click — but
+     * this caused a critical bug:
+     *
+     *   1. User signs up with filmingreport1@gmail.com (email+password).
+     *   2. User logs out.
+     *   3. User clicks "Sign in with Google" (intending filmingreport@gmail.com).
+     *   4. loginWithGoogleButton() sees Tokens.refresh is still set.
+     *   5. It calls refreshToken() → allauth re-issues JWTs for filmingreport1.
+     *   6. User is logged back into the email/password account — never saw Google.
+     *
+     * The refresh succeeds because it is a pure JWT exchange; allauth does not
+     * care that the user intends to switch accounts. Clearing the refresh token
+     * on logout forces loginWithGoogleButton() past Step 1 so it always reaches
+     * Step 2 (the Google GIS picker). The picker still has auto_select: true, so
+     * returning Google users with a single account get a seamless one-tap experience
+     * — just via Google GIS rather than the JWT refresh path.
+     *
+     * We intentionally skip DELETE /_allauth/app/v1/auth/session (server-side
+     * session teardown) to avoid a network round-trip; the short-lived access
+     * token expires on its own.
+     */
     async logout() {
-      Tokens.clearSession();
-
-      return {
-        ok: true,
-        status: 200,
-        data: { meta: { is_authenticated: false } }
-      };
+      Tokens.clear();
+      return { ok: true, status: 200, data: { meta: { is_authenticated: false } } };
     },
 
 
-    /* ========================================================
-       PASSWORD RESET REQUEST
-       ======================================================== */
-
+    /** Request a password-reset OTP. */
     async requestPasswordReset(email) {
       email = String(email || '').trim();
-
       if (!email) {
         return {
-          ok: false,
-          status: 400,
-          data: {
-            errors: [{
-              code: 'required',
-              param: 'email',
-              message: 'Email is required.'
-            }]
-          }
+          ok: false, status: 400,
+          data: { errors: [{ code: 'required', param: 'email', message: 'Email is required.' }] },
         };
       }
 
-      const r = await apiFetch(
-        `${ALLAUTH}/auth/password/request`,
-        {
-          method: 'POST',
-          skipSessionToken: true,
-          body: JSON.stringify({ email })
-        }
+      const r = await apiFetch(`${ALLAUTH}/auth/password/request`, {
+        method: 'POST',
+        skipSessionToken: true,
+        body: JSON.stringify({ email }),
+      });
+
+      const pending = r.data?.data?.flows?.some(
+        f => f.id === 'password_reset_by_code' && f.is_pending,
       );
 
-      const pending =
-        r.data?.data?.flows?.some(
-          f =>
-            f.id === 'password_reset_by_code' &&
-            f.is_pending
-        );
-
       if (r.ok || pending) {
-        sessionStorage.setItem(
-          'password_reset_email',
-          email
-        );
+        sessionStorage.setItem('password_reset_email', email);
       }
 
       return r;
     },
 
 
-    /* ========================================================
-       VERIFY PASSWORD RESET CODE
-       ======================================================== */
-
+    /** Validate a password-reset OTP (GET with X-Password-Reset-Key). */
     verifyPasswordResetCode: key =>
-      apiFetch(
-        `${ALLAUTH}/auth/password/reset`,
-        {
-          method: 'GET',
-          skipSessionToken: true,
-          headers: {
-            'X-Password-Reset-Key':
-              String(key || '').trim()
-          }
-        }
-      ),
+      apiFetch(`${ALLAUTH}/auth/password/reset`, {
+        method: 'GET',
+        // DO NOT skipSessionToken — the `password_reset_by_code` flow is stateful.
+        // requestPasswordReset() returns a 401 whose `meta.session_token` is saved
+        // by apiFetch automatically. allauth needs that X-Session-Token to locate
+        // the pending flow; without it the GET returns 409 (no flow pending).
+        headers: { 'X-Password-Reset-Key': String(key || '').trim() },
+      }),
 
 
-    /* ========================================================
-       RESET PASSWORD
-       ======================================================== */
-
-    async resetPasswordByCode({
-      key,
-      password
-    }) {
-      key = String(key || '').trim();
+    /** Submit the new password using the verified OTP key. */
+    async resetPasswordByCode({ key, password }) {
+      key      = String(key      || '').trim();
       password = String(password || '');
 
       if (!key || !password) {
         const field = key ? 'password' : 'key';
-
         return {
-          ok: false,
-          status: 400,
-          passwordReset: false,
-          authenticated: false,
-          data: {
-            errors: [{
-              code: 'required',
-              param: field,
-              message:
-                `${field === 'key'
-                  ? 'Reset code'
-                  : 'Password'} is required.`
-            }]
-          }
+          ok: false, status: 400, passwordReset: false, authenticated: false,
+          data: { errors: [{ code: 'required', param: field,
+            message: `${field === 'key' ? 'Reset code' : 'Password'} is required.` }] },
         };
       }
 
-      const r = await apiFetch(
-        `${ALLAUTH}/auth/password/reset`,
-        {
-          method: 'POST',
-          skipSessionToken: true,
-          body: JSON.stringify({
-            key,
-            password
-          })
-        }
-      );
+      const r = await apiFetch(`${ALLAUTH}/auth/password/reset`, {
+        method: 'POST',
+        // DO NOT skipSessionToken — POST /auth/password/reset also requires
+        // X-Session-Token for the code-based flow to identify the pending session.
+        body: JSON.stringify({ key, password }),
+      });
 
-      if (
-        r.status === 200 ||
-        r.status === 401
-      ) {
+      if (r.status === 200 || r.status === 401) {
         saveTokens(r.data);
-
-        const authenticated =
-          Tokens.isLoggedIn();
-
-        sessionStorage.removeItem(
-          'password_reset_email'
-        );
-
-        sessionStorage.removeItem(
-          'password_reset_key'
-        );
-
-        return {
-          ok: true,
-          status: r.status,
-          passwordReset: true,
-          authenticated,
-          data: r.data
-        };
+        sessionStorage.removeItem('password_reset_email');
+        sessionStorage.removeItem('password_reset_key');
+        return { ok: true, status: r.status, passwordReset: true,
+          authenticated: Tokens.isLoggedIn(), data: r.data };
       }
 
-      return {
-        ok: false,
-        status: r.status,
-        passwordReset: false,
-        authenticated: false,
-        data: r.data
-      };
+      return { ok: false, status: r.status, passwordReset: false, authenticated: false, data: r.data };
     },
 
 
-    /* ========================================================
-       CHANGE PASSWORD
-       ======================================================== */
-
-    changePassword: ({
-      current_password,
-      new_password
-    }) =>
-      apiFetch(
-        `${ALLAUTH}/account/password/change`,
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            current_password,
-            new_password
-          })
-        }
-      ),
+    /** Change password for an already-authenticated user. */
+    changePassword: ({ current_password, new_password }) =>
+      apiFetch(`${ALLAUTH}/account/password/change`, {
+        method: 'POST',
+        body: JSON.stringify({ current_password, new_password }),
+      }),
 
 
-    /* ========================================================
-       REFRESH TOKEN
-
-       IN-FLIGHT GUARD: HEADLESS_JWT_ROTATE_REFRESH_TOKEN=True means
-       every successful refresh invalidates the token it was called
-       with and issues a new one — refresh tokens are single-use.
-       If two callers both call refreshToken() before the first
-       response lands (e.g. loginWithGoogle()'s pre-emptive silent
-       refresh overlapping with apiFetch()'s 401 interceptor on page
-       load), the second call sends a token the first call has
-       already caused the server to invalidate — that 400s even
-       though the token was completely valid when this function was
-       entered. We fix this by sharing one in-flight promise across
-       all concurrent callers, so only one POST /tokens/refresh is
-       ever outstanding at a time and every caller gets that same
-       result instead of racing.
-       ======================================================== */
+    /* ----------------------------------------------------------
+       TOKEN REFRESH  (single in-flight guard)
+       ----------------------------------------------------------
+       HEADLESS_JWT_ROTATE_REFRESH_TOKEN=True means refresh tokens
+       are single-use. A concurrent 401 retry and a button-click
+       refresh race would both send the same (now-invalid) token.
+       We serialise all callers onto one outstanding promise so
+       only one POST /tokens/refresh is ever in-flight at a time.
+       ---------------------------------------------------------- */
 
     _refreshInFlight: null,
 
     async refreshToken() {
-      // Join the in-flight request instead of starting a new one.
-      if (this._refreshInFlight) {
-        return this._refreshInFlight;
-      }
-
+      if (this._refreshInFlight) return this._refreshInFlight;
       this._refreshInFlight = this._doRefreshToken();
-
-      try {
-        return await this._refreshInFlight;
-      } finally {
-        this._refreshInFlight = null;
-      }
+      try     { return await this._refreshInFlight; }
+      finally { this._refreshInFlight = null; }
     },
 
     async _doRefreshToken() {
       const refresh = Tokens.refresh;
-
       if (!refresh) {
-        return {
-          ok: false,
-          status: 401,
-          data: {
-            detail:
-              'No refresh token available.'
-          }
-        };
+        return { ok: false, status: 401, data: { detail: 'No refresh token available.' } };
       }
 
-      const response = await fetch(
-        `${ALLAUTH}/tokens/refresh`,
-        {
-          method: 'POST',
-          credentials: 'include',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-CSRFToken': csrf()
-          },
-          body: JSON.stringify({
-            refresh_token: refresh
-          })
-        }
-      );
+      const response = await fetch(`${ALLAUTH}/tokens/refresh`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() },
+        body: JSON.stringify({ refresh_token: refresh }),
+      });
 
-      const data = await json(response);
+      const data = await parseJSON(response);
 
       if (response.ok) {
         saveTokens(data);
       } else {
-        // allauth's headless /tokens/refresh returns 400 (not 401)
-        // for an invalid, expired, or already-rotated refresh token.
-        // Clearing on any non-ok response is correct: a refresh token
-        // that failed is not going to succeed on a later retry with
-        // the exact same value.
-        //
-        // NOTE: this no longer means "show the popup forever." Since
-        // logout() no longer destroys the server-side session (see
-        // logout() above), this branch should now only fire when the
-        // refresh token has genuinely expired
-        // (HEADLESS_JWT_REFRESH_TOKEN_EXPIRES_IN, default 7 days) or
-        // the user revoked Google's grant — both of which correctly
-        // require the popup.
+        // Token expired, already rotated, or revoked — hard wipe.
+        // Next sign-in will require the full Google picker.
         Tokens.clear();
       }
 
-      return {
-        ok: response.ok,
-        status: response.status,
-        data
-      };
+      return { ok: response.ok, status: response.status, data };
     },
 
 
-    /* ========================================================
-       GOOGLE LOGIN — Authorization Code Flow (popup)
-       ========================================================
+    /* ----------------------------------------------------------
+       GOOGLE — shared id_token sender
+       ----------------------------------------------------------
+       Both the silent-refresh fast-path and the picker fallback
+       ultimately deliver an OIDC id_token (JWT starting with eyJ…).
+       allauth validates it server-side via:
+         POST /_allauth/app/v1/auth/provider/token
+       No custom Django view is needed.
+       ---------------------------------------------------------- */
 
-       WHAT THIS DOES:
-         1. Opens a Google popup using GIS OAuth2 Code Client.
-         2. Google shows the account picker (built-in to GIS popup).
-         3. User picks an account → Google returns response.code.
-         4. We POST { code } to our Django endpoint /api/auth/google/.
-         5. Django exchanges the code server-side (client secret never
-            leaves Django).
-         6. Django returns the standard allauth JWT response.
-         7. We call saveTokens() — same function used for email login.
+    async _sendGoogleIdToken(idToken) {
+      const r = await apiFetch(`${ALLAUTH}/auth/provider/token`, {
+        method: 'POST',
+        skipAuth: true,
+        skipSessionToken: true,
+        body: JSON.stringify({
+          provider: 'google',
+          process:  'login',
+          token: {
+            client_id: window.__GOOGLE_CLIENT_ID__,
+            id_token:  idToken,
+          },
+        }),
+      });
 
-       WHAT WE DO NOT DO:
-         • We do NOT send the Google access token to Django.
-         • We do NOT send the Google ID token to Django.
-         • We do NOT use /_allauth/app/v1/auth/provider/token.
-         • We do NOT expose GOOGLE_CLIENT_SECRET to JavaScript.
+      if (!r.ok) return r;
+      saveTokens(r.data);
+      return { ok: true, status: r.status, data: r.data };
+    },
 
-       HOW ACCOUNT SELECTION WORKS:
-         google.accounts.oauth2.initCodeClient() always shows the
-         Google account picker when the user clicks "Continue with Google".
-         There is no auto_select in this flow — the account picker is
-         always shown. This is by design in the GIS OAuth2 API.
 
-       POPUP vs REDIRECT:
-         ux_mode: 'popup' opens a small Google window. The user picks
-         their account and grants consent if needed. The popup closes
-         automatically. No page navigation occurs in the SPA.
-       ======================================================== */
+    /* ----------------------------------------------------------
+       GOOGLE LOGIN — button-click entry point
+       ----------------------------------------------------------
+       Called ONLY when the user explicitly clicks "Sign in with
+       Google". Never called automatically on page load.
 
-    async loginWithGoogle() {
+       Flow:
+         1. renderButton picker — renders Google's button into a
+            hidden container and programmatically clicks it.
+              • renderButton bypasses FedCM → works even when the
+                user disabled FedCM via Chrome site settings.
+              • auto_select: true → if only one Google account is
+                signed in, the picker resolves silently (no popup).
+              • use_fedcm_for_prompt: false → prevents the FedCM
+                browser bar appearing alongside the popup.
+              • prompt() is NOT called — it would open a second
+                One Tap overlay on top of the popup.
 
-      // ── Try silent refresh first ────────────────────────────────────
-      // If we still hold a refresh_token from a prior Google login
-      // (sign-out no longer wipes it — see Tokens.clearSession), redeem
-      // it for a fresh access token WITHOUT touching Google's popup at
-      // all. No picker, no consent screen, because nothing new is being
-      // authorized — this is the same grant being renewed.
-      //
-      // Reuses the existing API.auth.refreshToken() (POST
-      // /_allauth/app/v1/tokens/refresh per allauth's headless spec) —
-      // it already reads Tokens.refresh itself, already calls
-      // saveTokens() on success, and (as of the bugfix in refreshToken()
-      // itself) now clears a dead token on ANY failure response — not
-      // just 401. allauth was confirmed via direct curl to return 400,
-      // not 401, for an invalid/expired/already-rotated refresh token;
-      // the old 401-only check left dead tokens stuck in localStorage
-      // forever, causing every later login to keep retrying the same
-      // spent token instead of correctly falling back to the popup.
-      //
-      // Falls through to the full popup flow below if there's no
-      // stored refresh token (refreshToken() returns ok:false
-      // immediately in that case) or if the refresh attempt fails —
-      // that case genuinely needs the user to re-authorize, so showing
-      // the picker + consent screen there is correct, not a bug.
-      if (Tokens.refresh) {
-        const refreshed = await this.refreshToken();
-        if (refreshed.ok) {
-          return refreshed;
-        }
+       CANCEL DETECTION:
+         When the user closes the popup without choosing an account,
+         Chrome refocuses the opener window. We register a focus
+         listener just before clicking the button and poll for
+         CANCEL_GRACE_MS — if the GIS callback hasn't fired by
+         then, the user cancelled. The grace period lets a real
+         successful login win the race against the focus event.
+
+       CONSENT SCREEN / ACCOUNT PICKER:
+         These are controlled by Google, not by frontend code.
+         • First sign-in: Google always shows the consent screen.
+         • First sign-in: Google shows the picker if multiple
+           accounts are present in the browser.
+         • Second sign-in: consent is already granted → skipped.
+         • Second sign-in: auto_select:true → picker skipped if
+           there is only one account.
+       ---------------------------------------------------------- */
+
+    async loginWithGoogleButton() {
+      const clientId = window.__GOOGLE_CLIENT_ID__;
+      if (!clientId) {
+        return { ok: false, status: 500, data: { detail: 'Google client ID not configured.' } };
+      }
+      if (!window.google?.accounts?.id) {
+        return { ok: false, status: 500, data: { detail: 'Google Identity Services not loaded.' } };
       }
 
-      return new Promise((resolve) => {
+      // ── Google account picker via renderButton ──────────────
+      // NOTE: Silent token refresh (the old Step 1) was removed because it
+      // caused a wrong-account bug: after logging out of an email+password
+      // account the refresh_token was still present, so clicking this button
+      // would re-authenticate the email/password user instead of showing the
+      // Google picker. Tokens.clear() in logout() now wipes the refresh token,
+      // so we always go straight to the GIS picker. auto_select: true in the
+      // initialize() call below gives returning single-account users a seamless
+      // one-tap experience without needing the JWT refresh path.
+      const container = document.getElementById('g-btn-container');
+      if (!container) {
+        return { ok: false, status: 500, data: { detail: 'Google sign-in container not found.' } };
+      }
 
-        const clientId = window.__GOOGLE_CLIENT_ID__;
-
-        if (!clientId) {
-          resolve({
-            ok: false,
-            status: 500,
-            data: {
-              detail: 'Google client ID is not configured.'
-            }
-          });
-          return;
-        }
-
-        if (!window.google?.accounts?.oauth2) {
-          resolve({
-            ok: false,
-            status: 500,
-            data: {
-              detail: 'Google Identity Services is not loaded. ' +
-                      'Check that the GIS script tag is in index.html.'
-            }
-          });
-          return;
-        }
-
-        // ── settled flag ──────────────────────────────────────────────────────────────────
-        // Ensures the Promise resolves exactly once. safeResolve() ignores
-        // duplicate calls (e.g. window focus fires then GIS callback fires late).
+      return new Promise(resolve => {
         let settled = false;
 
-        const safeResolve = (value) => {
+        const safeResolve = value => {
           if (settled) return;
           settled = true;
           window.removeEventListener('focus', onWindowFocus);
+          container.innerHTML = '';
           resolve(value);
         };
 
-        // ── Window focus detection — cancel fallback, not primary signal ──────────
-        //
-        // PROBLEM: When the user clicks “Cancel” on Google’s consent screen,
-        // GIS does NOT call the callback — the popup just closes silently.
-        // Without another signal, the Promise hangs and the button stays stuck.
-        //
-        // WHY THE OLD 500ms DELAY WAS WRONG: GIS refocuses the OPENER window
-        // the instant the user picks an account in the popup — well before the
-        // consent screen finishes and the real callback fires with the code.
-        // That refocus routinely takes longer than 500ms to turn into a
-        // callback (network latency to Google, consent-screen render time),
-        // so this listener was firing "cancelled" on successful logins, before
-        // the real callback (which the `settled` guard then silently dropped).
-        //
-        // FIX: poll for `settled` for several seconds after focus returns,
-        // instead of assuming 500ms is enough. Only resolve as cancelled if
-        // GIS truly never calls back in that window (i.e. the popup is gone
-        // and nothing is happening) — a real Cancel/Deny/✕ resolves almost
-        // immediately since GIS has nothing left to send; a real login
-        // resolves as soon as the code exchange with our backend completes.
-        const FOCUS_CANCEL_GRACE_MS = 4000;
-        const FOCUS_CANCEL_POLL_MS = 150;
+        // ── Cancel detection via window focus ─────────────────
+        // When the user closes the Google popup without choosing
+        // an account, the browser refocuses the opener window.
+        // We wait CANCEL_GRACE_MS after focus returns — if the
+        // GIS credential callback hasn't fired in that window,
+        // the user cancelled. The grace period ensures a real
+        // successful login (callback fires just after focus) wins
+        // the race against an immediate cancel resolution.
+        const CANCEL_GRACE_MS = 500;
 
         const onWindowFocus = () => {
-          const deadline = Date.now() + FOCUS_CANCEL_GRACE_MS;
-          const poll = () => {
-            if (settled) return; // real callback (success or error) won the race
-            if (Date.now() >= deadline) {
-              safeResolve({
-                ok: false,
-                cancelled: true,
-                status: 400,
-                data: { detail: 'Google sign-in was cancelled.' }
-              });
-              return;
-            }
-            setTimeout(poll, FOCUS_CANCEL_POLL_MS);
-          };
-          poll();
+          setTimeout(() => {
+            safeResolve({
+              ok:        false,
+              cancelled: true,
+              status:    400,
+              data:      { detail: 'Google sign-in was cancelled.' },
+            });
+          }, CANCEL_GRACE_MS);
         };
 
-        setTimeout(() => {
-          window.addEventListener('focus', onWindowFocus, { once: true });
-        }, 300);
+        // ── Render Google's button into the hidden container ───
+        google.accounts.id.cancel();
 
-        const client = google.accounts.oauth2.initCodeClient({
-          client_id: clientId,
-
-          // openid  → OIDC; gives us "sub" (stable Google user ID)
-          // email   → email address
-          // profile → name, picture
-          scope: 'openid email profile',
-
-          // Popup UX: small overlay window, no page navigation.
-          ux_mode: 'popup',
-
-          // Show the account picker so users can choose which Google account
-          // to use, WITHOUT forcing the consent screen on every single login.
-          // 'select_account' alone shows the picker; omitting 'consent' lets
-          // Google skip re-asking for permission once the user has already
-          // granted it for this app. (The old 'select_account consent' value
-          // forced full re-consent every time — that was the actual cause of
-          // "select account and consent shows every time".)
-          prompt: 'select_account',
-
-          callback: async (response) => {
-            // Guard: ignore late / duplicate callback fires.
+        google.accounts.id.initialize({
+          client_id:             clientId,
+          callback: async response => {
             if (settled) return;
-
-            // response.code is the authorization code from Google.
-            // It is NOT an access token or ID token.
-            // It is a one-time-use short-lived code that only Django
-            // can exchange for real tokens (using the client secret).
-
-            if (response.error) {
-              // Google returned an error. Covers all ways a user can
-              // dismiss the popup or consent screen:
-              //   popup_closed_by_user  – user closed the popup window
-              //   access_denied         – user clicked "Deny"
-              //   user_cancel           – user clicked "Cancel" on the
-              //                          new consent screen
-              //   cancelled             – generic GIS cancel signal
-              //   popup_blocked         – browser blocked the popup
-              const isCancelled =
-                response.error === 'popup_closed_by_user' ||
-                response.error === 'access_denied'        ||
-                response.error === 'user_cancel'          ||
-                response.error === 'cancelled'            ||
-                response.error === 'popup_blocked';
-
+            if (!response?.credential) {
               safeResolve({
-                ok: false,
-                cancelled: isCancelled,
+                ok:     false,
                 status: 400,
-                data: {
-                  error: response.error,
-                  detail: isCancelled
-                    ? 'Google sign-in was cancelled.'
-                    : `Google error: ${response.error}`
-                }
+                data:   { detail: 'Google did not return a credential.' },
               });
               return;
             }
-
-            if (!response?.code) {
-              safeResolve({
-                ok: false,
-                status: 400,
-                data: {
-                  detail: 'Google did not return an authorization code.'
-                }
-              });
-              return;
-            }
-
             try {
-              // POST { code } to our Django endpoint.
-              // Django exchanges it server-side using the client secret.
-              const result = await apiFetch(
-                `${API_ORIGIN}/api/auth/google/`,
-                {
-                  method: 'POST',
-                  skipAuth: true,         // No JWT needed (not logged in yet)
-                  skipSessionToken: true, // No allauth session token yet
-                  body: JSON.stringify({
-                    code: response.code   // Authorization code, NOT a token
-                  })
-                }
-              );
-
-              console.log(
-                '[Google] /api/auth/google/ →',
-                result.status,
-                result.data
-              );
-
-              if (!result.ok) {
-                safeResolve(result);
-                return;
-              }
-
-              // Django returned the standard allauth JWT response:
-              // { status: 200, data: { user: {...}, methods: [...] },
-              //   meta: { access_token: "eyJ...", refresh_token: "eyJ...",
-              //           is_authenticated: true } }
-              //
-              // saveTokens() reads meta.access_token and meta.refresh_token.
-              // This is the same function used for email/password login.
-              saveTokens(result.data);
-
+              safeResolve(await API.auth._sendGoogleIdToken(response.credential));
+            } catch (err) {
               safeResolve({
-                ok: true,
-                status: result.status,
-                data: result.data
-              });
-
-            } catch (networkError) {
-              console.error('[Google] Network error:', networkError);
-              safeResolve({
-                ok: false,
+                ok:     false,
                 status: 500,
-                data: {
-                  detail: networkError.message || 'Network error during Google sign-in.'
-                }
+                data:   { detail: err.message || 'Network error during Google sign-in.' },
               });
             }
-          }
+          },
+          // auto_select: true → single-account browsers skip the picker.
+          // The user already chose this account on first sign-in, so
+          // asking again is unnecessary friction.
+          auto_select:           true,
+          cancel_on_tap_outside: true,
+          // false → use classic popup, not the FedCM browser bar.
+          // FedCM can be disabled by the user via Chrome site settings,
+          // which would silently suppress the prompt. renderButton +
+          // use_fedcm_for_prompt:false always shows the popup.
+          use_fedcm_for_prompt:  false,
+          itp_support:           true,  // Safari ITP compatibility
         });
 
-        // requestCode() MUST be called synchronously inside the user's
-        // click handler. Calling it asynchronously (e.g., after an
-        // await) causes browsers to block the popup as a popup blocker
-        // violation because it's no longer a direct result of a user gesture.
-        client.requestCode();
+        container.innerHTML = '';
+        google.accounts.id.renderButton(container, {
+          type:           'standard',
+          theme:          'outline',
+          size:           'large',
+          logo_alignment: 'left',
+        });
+
+        // Programmatically click the rendered button.
+        // This works because loginWithGoogleButton() is always
+        // called from a real user click handler in app.js — the
+        // browser treats this as a trusted gesture and won't
+        // block the resulting popup.
+        const gBtn = container.querySelector('div[role="button"], iframe');
+
+        if (!gBtn) {
+          // GIS iframe hasn't rendered yet (script still loading).
+          safeResolve({
+            ok:     false,
+            status: 500,
+            data:   { detail: 'Google button not ready. Please try again.' },
+          });
+          return;
+        }
+
+        // Register the focus listener just before the click so it
+        // only fires when the popup closes, not before it opens.
+        window.addEventListener('focus', onWindowFocus, { once: true });
+        gBtn.click();
+
+        // ── Hard timeout ───────────────────────────────────────
+        // Catches the edge case where focus never returns (e.g.
+        // user switches to another app and leaves the popup open).
+        setTimeout(() => {
+          safeResolve({
+            ok:        false,
+            cancelled: true,
+            status:    400,
+            data:      { detail: 'Google sign-in timed out.' },
+          });
+        }, 5 * 60 * 1000);
       });
-    }
-  },
+    },
+
+  }, // end auth
 
 
-  /* ==========================================================
-     APPLICATION API
-     ========================================================== */
+  /* ----------------------------------------------------------
+     APPLICATION ENDPOINTS
+     ---------------------------------------------------------- */
 
-  getMe: () =>
-    apiFetch(`${API_ORIGIN}/api/me/`),
+  /** GET /api/me/ — retrieve the authenticated user. */
+  getMe: () => apiFetch(`${API_ORIGIN}/api/me/`),
 
-  getProfile: () =>
-    apiFetch(
-      `${API_ORIGIN}/api/me/profile/update/`
-    ),
+  /** GET /api/me/profile/update/ — retrieve profile fields. */
+  getProfile: () => apiFetch(`${API_ORIGIN}/api/me/profile/update/`),
 
+  /** PATCH /api/me/profile/update/ — update phone + image. */
   async updateProfile(formData) {
     const headers = {};
+    if (Tokens.access) headers.Authorization = `Bearer ${Tokens.access}`;
 
-    if (Tokens.access) {
-      headers.Authorization =
-        `Bearer ${Tokens.access}`;
-    }
+    const response = await fetch(`${API_ORIGIN}/api/me/profile/update/`, {
+      method:      'PATCH',
+      credentials: 'include',
+      headers,
+      body:        formData,
+    });
 
-    const response = await fetch(
-      `${API_ORIGIN}/api/me/profile/update/`,
-      {
-        method: 'PATCH',
-        credentials: 'include',
-        headers,
-        body: formData
-      }
-    );
+    return { ok: response.ok, status: response.status, data: await parseJSON(response) };
+  },
 
-    return {
-      ok: response.ok,
-      status: response.status,
-      data: await json(response)
-    };
-  }
-};
+}; // end API
 
 
 /* ============================================================
-   GLOBAL
+   CONSTANTS  (defined here so they exist before any call)
    ============================================================ */
+const API_ORIGIN = window.__API_ORIGIN__ || 'http://localhost:8000';
+const ALLAUTH    = `${API_ORIGIN}/_allauth/app/v1`;
 
-window.API = API;
+
+/* ============================================================
+   GLOBAL EXPORTS
+   ============================================================ */
+window.API    = API;
 window.Tokens = Tokens;
