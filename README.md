@@ -10,13 +10,3 @@ A robust, headless Django authentication backend leveraging `django-allauth` wit
 * **Google Sign-In (GSI) & OAuth 2.0:** Integrated social authentication workflow with support for custom Client IDs, Secret Keys, JavaScript Origins, and Redirect URIs.
 
 ---
-
-## 📦 Project Setup & Installation
-
-### 1. Clone & Environment Configuration
-```bash
-git clone [https://github.com/SurajCh-58/Register-and-login-using-dajngo-allauth-headless.git]
-cd your-repo-name
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-pip install -r requirements.txt
