@@ -15,7 +15,7 @@ A robust, headless Django authentication backend leveraging `django-allauth` wit
 
 ### 1. Clone & Environment Configuration
 ```bash
-git clone [https://github.com/surajCh-58/your-repo-name.git](https://github.com/surajCh-58/your-repo-name.git)
+git clone [https://github.com/SurajCh-58/Register-and-login-using-dajngo-allauth-headless.git]
 cd your-repo-name
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
